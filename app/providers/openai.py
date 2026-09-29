@@ -15,7 +15,6 @@ from app.core.schemas import (
     EmbeddingResponse,
     EmbeddingVector,
     FinishReason,
-    ImagePart,
     Message,
     Role,
     StreamChunk,
@@ -44,7 +43,7 @@ class OpenAIProvider(Provider):
             for part in message.content:
                 if isinstance(part, TextPart):
                     content.append({"type": "text", "text": part.text})
-                elif isinstance(part, ImagePart):
+                else:
                     content.append({
                         "type": "image_url",
                         "image_url": {"url": part.url, "detail": part.detail},
@@ -195,7 +194,7 @@ class OpenAIProvider(Provider):
                 headers=self._headers(deployment),
                 json=self._chat_payload(request, deployment, stream=True),
             ) as response:
-                response.raise_for_status()
+                await self._raise_for_stream_status(response)
                 async for line in response.aiter_lines():
                     if not line or line.startswith(":") or not line.startswith("data: "):
                         continue

@@ -145,7 +145,10 @@ class ResilientExecutor:
             response.provider = deployment.provider
             return response
 
-        raise last_error or AllProvidersFailedError("Request failed with no recorded error")
+        # The final attempt always returns or raises; this only satisfies the type checker.
+        raise last_error or AllProvidersFailedError(  # pragma: no cover
+            "Request failed with no recorded error"
+        )
 
     # -- Streaming --------------------------------------------------------
 

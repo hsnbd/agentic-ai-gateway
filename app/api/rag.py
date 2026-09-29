@@ -192,11 +192,8 @@ def _state(request: Request) -> GatewayState:
 
 
 def _service(request: Request) -> RagService:
-    state = _state(request)
-    service = state.components.get("rag_service")
-    if service is None:
-        service = RagService(state)
-        state.components["rag_service"] = service
+    # Created by GatewayState.startup, shared with the RAG pipeline stage.
+    service: RagService = _state(request).components["rag_service"]
     return service
 
 

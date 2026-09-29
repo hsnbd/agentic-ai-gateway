@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.accounting.tokens import count_message_tokens
 from app.api.chat import _error, _json_body, serve_chat
 from app.core.errors import GatewayError
 from app.dialects.anthropic_dialect import AnthropicDialect
@@ -29,12 +30,6 @@ async def count_tokens(request: Request) -> JSONResponse:
         payload = await _json_body(request)
         # Counting does not require max_tokens; decoding still validates the messages.
         chat = dialect.decode_chat({**payload, "max_tokens": payload.get("max_tokens", 1)})
-        try:
-            from app.accounting.tokens import count_message_tokens
-        except ImportError:
-            count = sum(len(message.text()) // 4 for message in chat.messages)
-        else:
-            count = count_message_tokens(chat.messages, chat.model)
-        return JSONResponse({"input_tokens": count})
+        return JSONResponse({"input_tokens": count_message_tokens(chat.messages, chat.model)})
     except GatewayError as exc:
         return _error(exc, dialect)

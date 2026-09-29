@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -194,7 +194,7 @@ class Pipeline:
         self._annotate(ctx, response)
         return response
 
-    async def run_stream(self, ctx: RequestContext) -> AsyncIterator[StreamChunk]:
+    async def run_stream(self, ctx: RequestContext) -> AsyncGenerator[StreamChunk, None]:
         """Stream variant.
 
         Pre-stages still run (auth, guardrails, cache). A cache hit is replayed

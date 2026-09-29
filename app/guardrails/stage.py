@@ -91,7 +91,8 @@ class OutputGuardrailStage:
                     "phase": Phase.OUTPUT.value,
                 },
             )
-        if result.redacted and response.choices:
+        # Only non-empty text can be redacted, so there is always a first choice.
+        if result.redacted:
             message = response.choices[0].message
             message.content = _redact_content(
                 message.content,

@@ -8,8 +8,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.accounting.tokens import count_tokens
 from app.core.errors import InvalidRequestError
-from app.core.schemas import ChatRequest, Message, Role
+from app.core.schemas import ChatRequest, Message, Role, TextPart
 
 
 @dataclass(slots=True)
@@ -111,11 +112,7 @@ async def retrieve(
 
 
 def _token_count(text: str) -> int:
-    try:
-        from app.accounting.tokens import count_tokens
-    except ImportError:
-        return max(1, len(text) // 4) if text else 0
-    return int(count_tokens(text, "gpt-4o"))
+    return count_tokens(text, "gpt-4o")
 
 
 def build_context(
@@ -164,8 +161,9 @@ def build_context(
                 low = middle + 1
             else:
                 high = middle - 1
-        if best:
-            entries.append(best)
+        # The prefix alone fits (remaining_budget > 0), so the search always finds
+        # at least the header with an empty body.
+        entries.append(best)
         break
     return "\n\n".join(entries)
 
@@ -194,8 +192,6 @@ def augment_request(request: ChatRequest, context: str, *, mode: str = "system")
         if message.content is None or isinstance(message.content, str):
             message.content = prefix + (message.content or "")
         else:
-            from app.core.schemas import TextPart
-
             message.content.insert(0, TextPart(text=prefix))
         return augmented
     augmented.messages.append(Message(role=Role.USER, content=f"Retrieved context:\n{context}"))

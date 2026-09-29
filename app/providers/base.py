@@ -167,6 +167,18 @@ class Provider(abc.ABC):
                 params[key] = value
         return params
 
+    @staticmethod
+    async def _raise_for_stream_status(response: httpx.Response) -> None:
+        """`raise_for_status` for a streamed response.
+
+        A streamed body is not read up front, so the error detail (and the
+        mapping that depends on it, e.g. context-length vs. generic 400) would
+        be unreadable in `map_error`. Read it first on failure.
+        """
+        if response.is_error:
+            await response.aread()
+        response.raise_for_status()
+
     def map_error(self, exc: Exception, deployment: Deployment) -> ProviderError:
         """Translate a transport or HTTP error into the unified taxonomy."""
         model = deployment.provider_model

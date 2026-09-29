@@ -92,7 +92,7 @@ class GeminiProvider(Provider):
             for part in message.content:
                 if isinstance(part, TextPart):
                     parts.append({"text": part.text})
-                elif isinstance(part, ImagePart):
+                else:
                     parts.append(GeminiProvider._image_part(part))
         return parts
 
@@ -308,7 +308,7 @@ class GeminiProvider(Provider):
                 "POST", url, headers=self._headers(deployment),
                 json=self._payload(request, deployment),
             ) as response:
-                response.raise_for_status()
+                await self._raise_for_stream_status(response)
                 async for line in response.aiter_lines():
                     if not line:
                         if event_lines:

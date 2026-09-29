@@ -66,14 +66,14 @@ async def get_current_admin(
 
 def require_role(role: str) -> Any:
     """Return a dependency requiring the authenticated user to have ``role``."""
+    if role not in {"admin", "viewer"}:
+        raise ValueError(f"Unsupported console role: {role}")
 
     async def role_guard(
         user: Annotated[AdminUser, Depends(get_current_admin)],
     ) -> AdminUser:
         if role == "admin" and user.role != "admin":
             raise HTTPException(status_code=403, detail="Administrator role required")
-        if role not in {"admin", "viewer"}:
-            raise ValueError(f"Unsupported console role: {role}")
         return user
 
     return role_guard

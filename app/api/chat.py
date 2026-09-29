@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
+from app.auth.stage import AuthStage
 from app.core.errors import (
-    ConfigurationError,
     ErrorCode,
     GatewayError,
     InvalidRequestError,
@@ -111,7 +111,7 @@ async def serve_chat(
             ctx.response = response
             return JSONResponse(dialect.encode_chat(response), headers=_headers(ctx))
 
-        iterator = pipeline.run_stream(ctx).__aiter__()
+        iterator = pipeline.run_stream(ctx)
         # Pre-stages and the provider are lazy: advance before sending HTTP 200.
         try:
             first = await anext(iterator)
@@ -148,8 +148,7 @@ async def serve_chat(
                 if dialect.name == "openai":
                     yield "data: [DONE]\n\n"
             finally:
-                if isinstance(iterator, AsyncGenerator):
-                    await iterator.aclose()
+                await iterator.aclose()
 
         return StreamingResponse(
             frames(), media_type="text/event-stream", headers={**_STREAM_HEADERS, **headers}
@@ -191,9 +190,9 @@ async def completions(request: Request) -> JSONResponse | StreamingResponse:
                 return streamed
 
             async def legacy_frames() -> AsyncIterator[str]:
-                async for frame in streamed.body_iterator:
-                    if not isinstance(frame, str):
-                        frame = bytes(frame).decode("utf-8")
+                async for raw_frame in streamed.body_iterator:
+                    # serve_chat's frames() yields str; Starlette types it more loosely.
+                    frame = cast(str, raw_frame)
                     if frame == "data: [DONE]\n\n":
                         yield frame
                         continue
@@ -287,11 +286,6 @@ async def embeddings(request: Request) -> JSONResponse:
             dialect,
         )
         # Embeddings bypass chat-specific cache and guardrails, but not key authentication.
-        try:
-            from app.auth.stage import AuthStage
-        except ImportError as exc:
-            raise ConfigurationError("Authentication stage is unavailable") from exc
-
         await AuthStage().process(ctx)
         deployments = [
             d for d in state.registry.deployments_for(embedding.model) if d.capabilities.embeddings

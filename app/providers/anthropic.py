@@ -47,7 +47,7 @@ class AnthropicProvider(Provider):
         for part in content:
             if isinstance(part, TextPart):
                 blocks.append({"type": "text", "text": part.text})
-            elif isinstance(part, ImagePart):
+            else:
                 if part.url.startswith("data:"):
                     header, separator, data = part.url[5:].partition(",")
                     if not separator:
@@ -304,7 +304,7 @@ class AnthropicProvider(Provider):
                 headers={**self._headers(deployment), "Accept": "text/event-stream"},
                 json={**self._request_body(request, deployment), "stream": True},
             ) as response:
-                response.raise_for_status()
+                await self._raise_for_stream_status(response)
                 event_name = "message"
                 data_lines: list[str] = []
                 async for line in response.aiter_lines():

@@ -105,7 +105,8 @@ async def run_tool_loop(
     total = Usage()
     response: ChatResponse | None = None
 
-    for iteration in range(max_iterations):
+    # Every path through the body breaks on the last iteration at the latest.
+    for iteration in range(max_iterations):  # pragma: no branch
         response = await call_model(ctx)
         total = total + response.usage
         choice = response.choices[0] if response.choices else None

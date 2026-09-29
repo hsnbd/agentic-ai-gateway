@@ -47,9 +47,7 @@ def build_pipeline(state: GatewayState) -> Pipeline:
     pre: list[Stage] = []
     post: list[PostStage] = []
 
-    auth = _build_auth(state)
-    if auth is not None:
-        pre.append(auth)
+    pre.append(_build_auth(state))
 
     # Before guardrails and cache: retrieved text is screened, and the cache
     # keys on the grounded request. It is a no-op unless a request asks for it.
@@ -84,7 +82,7 @@ def build_pipeline(state: GatewayState) -> Pipeline:
     return Pipeline(pre_stages=pre, executor=executor, post_stages=post)
 
 
-def _build_auth(state: GatewayState) -> Stage | None:
+def _build_auth(state: GatewayState) -> Stage:
     """Auth is mandatory.
 
     Serving unauthenticated traffic silently would be worse than refusing to

@@ -132,3 +132,86 @@ def test_accounting_degrades_but_keeps_metrics() -> None:
     pipeline = build_pipeline(state)  # type: ignore[arg-type]
     assert pipeline.post_stages[-1].name == "observability"
     assert "usage" not in state.components
+
+
+def _block_import(monkeypatch: pytest.MonkeyPatch, blocked: str) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == blocked:
+            raise ImportError(f"simulated missing {blocked}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+
+def test_missing_observability_module_drops_the_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    _block_import(monkeypatch, "app.observability.stage")
+    pipeline = build_pipeline(_FakeState())  # type: ignore[arg-type]
+    assert "observability" not in [s.name for s in pipeline.post_stages]
+
+
+def test_cache_construction_failure_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
+    _block_import(monkeypatch, "app.cache.embedder")
+    state = _FakeState(redis=object())
+    pipeline = build_pipeline(state)  # type: ignore[arg-type]
+    assert "cache" not in [s.name for s in pipeline.pre_stages]
+    assert "cache" not in state.components
+
+
+class _JudgeProvider:
+    def __init__(self, reply: str | None) -> None:
+        self.reply = reply
+        self.calls = 0
+
+    async def chat(self, request: Any, deployment: Any) -> Any:
+        self.calls += 1
+        if self.reply is None:
+            raise RuntimeError("judge deployment down")
+        return SimpleNamespace(text=self.reply)
+
+
+class _JudgeRegistry:
+    def __init__(self, deployments: list[Any], providers: dict[str, _JudgeProvider]) -> None:
+        self.deployments = deployments
+        self.providers = providers
+
+    def deployments_for(self, model: str) -> list[Any]:
+        return self.deployments
+
+    def provider_for(self, deployment: Any) -> _JudgeProvider:
+        return self.providers[deployment.id]
+
+
+def _deployment(id: str, priority: int, chat: bool = True) -> Any:
+    return SimpleNamespace(id=id, priority=priority, capabilities=SimpleNamespace(chat=chat))
+
+
+async def test_judge_client_fails_over_in_priority_order() -> None:
+    from app.core.builder import _judge_client
+
+    broken, working = _JudgeProvider(None), _JudgeProvider('{"score": 0}')
+    registry = _JudgeRegistry(
+        [_deployment("second", 2), _deployment("embed", 0, chat=False), _deployment("first", 1)],
+        {"first": broken, "second": working},
+    )
+    judge = _judge_client(SimpleNamespace(registry=registry))  # type: ignore[arg-type]
+    assert await judge("judge-model", "instructions", "text") == '{"score": 0}'
+    assert broken.calls == 1 and working.calls == 1
+
+
+async def test_judge_client_raises_last_error() -> None:
+    from app.core.builder import _judge_client
+    from app.core.errors import NoHealthyDeploymentError
+
+    no_deployments = _judge_client(SimpleNamespace(registry=_JudgeRegistry([], {})))  # type: ignore[arg-type]
+    with pytest.raises(NoHealthyDeploymentError):
+        await no_deployments("judge-model", "i", "t")
+
+    failing = _judge_client(
+        SimpleNamespace(  # type: ignore[arg-type]
+            registry=_JudgeRegistry([_deployment("only", 1)], {"only": _JudgeProvider(None)})
+        )
+    )
+    with pytest.raises(RuntimeError, match="judge deployment down"):
+        await failing("judge-model", "i", "t")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import csv
 import io
@@ -11,9 +10,8 @@ import logging
 import math
 import time
 from collections import defaultdict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from typing import Annotated, Any, Literal
 
 import yaml
@@ -122,10 +120,6 @@ def _window_start(window: str) -> datetime:
     return datetime.now(UTC) - _duration(window)
 
 
-def _to_float(value: Decimal | float | int | None) -> float:
-    return float(value or 0)
-
-
 def _order_column(model: type[Any], requested: str, allowed: set[str]) -> Any:
     if requested not in allowed:
         raise HTTPException(status_code=422, detail=f"Unsupported order_by field: {requested}")
@@ -143,23 +137,17 @@ def _rollup_totals(rows: list[UsageRollup]) -> dict[str, float | int]:
     }
 
 
-def _percentile(values: list[float], percentile: float) -> float:
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    index = max(0, math.ceil(percentile * len(ordered)) - 1)
-    return ordered[index]
-
-
 async def _latency_percentile(
     session: AsyncSession,
     start: datetime,
     percentile: float,
-    end: datetime | None = None,
+    end: datetime,
 ) -> float:
-    filters = [RequestLog.created_at >= start, RequestLog.latency_ms.is_not(None)]
-    if end is not None:
-        filters.append(RequestLog.created_at < end)
+    filters = [
+        RequestLog.created_at >= start,
+        RequestLog.created_at < end,
+        RequestLog.latency_ms.is_not(None),
+    ]
     count = await session.scalar(
         select(func.count()).select_from(RequestLog).where(*filters)
     )
@@ -353,9 +341,10 @@ async def logout(
 ) -> LogoutResponse:
     """Revoke the presented access token and, if given, its refresh token."""
     revocation = token_revocation(state)
-    if credentials is not None:
-        with contextlib.suppress(GatewayError):
-            await revocation.revoke(decode_token(credentials.credentials, "access"))
+    # CurrentAdmin has already required a bearer token, so credentials are present.
+    assert credentials is not None
+    with contextlib.suppress(GatewayError):
+        await revocation.revoke(decode_token(credentials.credentials, "access"))
     if body is not None and body.refresh_token:
         with contextlib.suppress(GatewayError):
             await revocation.revoke(decode_token(body.refresh_token, "refresh"))
@@ -1547,35 +1536,23 @@ async def guardrail_policies(
     page: Pagination,
     _: CurrentAdmin,
 ) -> Page[GuardrailPolicyResponse]:
-    config = state.components.get("guardrails")
-    if config is None:
-        try:
-            from app.guardrails.registry import GuardrailRegistry
+    from app.guardrails.registry import GuardrailRegistry
 
-            config = GuardrailRegistry.load(state.settings.guardrails_config_path)
-        except ImportError:
-            logger.info("Guardrail subsystem is unavailable")
-    policies = getattr(config, "_policies", None) if config is not None else None
-    if policies is None:
-        policies = getattr(config, "policies", {}) if config is not None else {}
-    if isinstance(policies, dict):
-        items = []
-        for name, policy in sorted(policies.items()):
-            rules = getattr(policy, "rules", None)
-            if rules is None:
-                rules = [
-                    *getattr(policy, "input_rules", []),
-                    *getattr(policy, "output_rules", []),
-                ]
-            items.append(
-                GuardrailPolicyResponse(
-                    name=str(name),
-                    enabled=bool(getattr(policy, "enabled", True)),
-                    rules=[str(getattr(rule, "name", rule)) for rule in rules],
-                )
+    # With guardrails disabled nothing is loaded at startup; read the file so
+    # operators can still inspect the policies they would get.
+    registry: GuardrailRegistry = state.components.get(
+        "guardrails"
+    ) or GuardrailRegistry.load(state.settings.guardrails_config_path)
+    items = []
+    for name in sorted(registry.list_policies()):
+        policy = registry.get_policy(name)
+        items.append(
+            GuardrailPolicyResponse(
+                name=name,
+                enabled=True,
+                rules=[rule.name for rule in (*policy.input_rules, *policy.output_rules)],
             )
-    else:
-        items = []
+        )
     return Page(
         items=items[page.offset : page.offset + page.limit],
         total=len(items),
@@ -1591,14 +1568,7 @@ async def cache_stats(
 ) -> CacheStatsResponse:
     enabled = bool(state.settings.cache_enabled)
     cache = state.components.get("cache")
-    stats_method: Callable[[], Any] | None = getattr(cache, "stats", None)
-    values: dict[str, Any] = {}
-    if callable(stats_method):
-        result = stats_method()
-        if asyncio.iscoroutine(result):
-            result = await result
-        if isinstance(result, dict):
-            values = result
+    values: dict[str, Any] = await cache.stats() if cache is not None else {}
     available = bool(state.redis is not None and getattr(cache, "available", True))
     index_size_bytes: int | None = None
     if available and state.redis is not None:
@@ -1722,11 +1692,8 @@ async def cache_invalidate(
         removed = await state.redis.delete(body.key)
         return CacheInvalidateResponse(invalidated=int(removed))
     cache = state.components.get("cache")
-    invalidate = getattr(cache, "invalidate", None)
-    if callable(invalidate):
-        result = invalidate(body.namespace)
-        removed = await result if asyncio.iscoroutine(result) else result
-        return CacheInvalidateResponse(invalidated=int(removed))
+    if cache is not None:
+        return CacheInvalidateResponse(invalidated=int(await cache.invalidate(body.namespace)))
 
     pattern = (
         f"aigw:cache:entry:{body.namespace}:*"

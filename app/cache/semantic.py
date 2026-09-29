@@ -238,7 +238,7 @@ class SemanticCache:
                 await self.ensure_index()
                 if not self._index_ready:
                     return None
-        return None
+        return None  # pragma: no cover - the second attempt always returns or raises
 
     async def store(self, ctx: RequestContext, response: ChatResponse) -> None:
         """Store only complete, ordinary assistant responses in the request namespace."""

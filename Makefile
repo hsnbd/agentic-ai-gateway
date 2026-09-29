@@ -1,4 +1,4 @@
-.PHONY: help install dev test test-unit test-integration test-up test-down lint fmt typecheck check ui-install ui-dev ui-build ui-lint up down logs migrate e2e-install e2e-up e2e e2e-api e2e-ui e2e-down
+.PHONY: help install dev test test-unit test-integration coverage ui-test test-up test-down lint fmt typecheck check ui-install ui-dev ui-build ui-lint up down logs migrate e2e-install e2e-up e2e e2e-api e2e-ui e2e-down
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -22,6 +22,9 @@ test-unit: ## Run unit tests only (no services needed)
 test-integration: test-up ## Run integration tests against real Postgres and Redis Stack
 	uv run pytest tests/integration -q
 
+coverage: test-up ## Unit + integration with the 100% line and branch coverage gate
+	uv run pytest --cov --cov-report=term-missing:skip-covered --cov-report=html
+
 test-up: ## Start the throwaway test datastores
 	$(TEST_COMPOSE) up -d --wait
 
@@ -38,7 +41,7 @@ fmt: ## Format and autofix with ruff
 typecheck: ## Type-check with mypy
 	uv run mypy app
 
-check: lint typecheck test ## Lint, type-check, and test
+check: lint typecheck coverage ui-test ## Lint, type-check, and run every gated suite
 
 ui-install: ## Install console dependencies
 	cd ui && npm install
@@ -48,6 +51,9 @@ ui-dev: ## Run the console dev server
 
 ui-build: ## Build the console into app/ui_static
 	cd ui && npm run build
+
+ui-test: ## Unit-test the console with its coverage gate
+	cd ui && npm run test:coverage
 
 ui-lint: ## Type-check and lint the console
 	cd ui && npx tsc --noEmit && npm run lint

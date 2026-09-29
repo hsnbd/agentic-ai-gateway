@@ -97,14 +97,28 @@ It exits non-zero below `--min-success-rate`, so it doubles as a CI gate.
 
 ## Testing
 
-Three suites, from fastest to most complete. [features.md](./features.md) maps
+Four suites, from fastest to most complete. [features.md](./features.md) maps
 every feature to the tests that cover it.
 
 | Suite | Command | Needs |
 |---|---|---|
 | Unit (`tests/unit`) | `make test-unit` | nothing |
 | Integration (`tests/integration`): the real app on real Postgres and Redis Stack, fake LLM providers | `make test-integration` | Docker |
+| Console unit (`ui/src/**/*.test.ts(x)`): Vitest + Testing Library | `make ui-test` | Node 22 |
 | End-to-end (`e2e/`): Cucumber scenarios through the official OpenAI/Anthropic SDKs and a real browser driving the console, against the dockerised stack | `make e2e-install` once, then `make e2e` | Docker, Node 22 |
+
+Coverage is a gate, not a report:
+
+- `make coverage` runs unit + integration and fails below **100% line and
+  branch coverage** of `app/` (`[tool.coverage]` in `pyproject.toml`). CI runs
+  the two suites in separate jobs and combines their data in a `coverage` job.
+  Code that genuinely cannot run is marked `# pragma: no cover` with the reason
+  next to it; prefer deleting dead code over excluding it.
+- `make ui-test` fails below 100% on the console's logic layer: the API client,
+  SSE parsing, the playground inspector, formatters, auth, and shared
+  components (`ui/vitest.config.ts`). Pages are covered by the `@ui` Cucumber
+  scenarios instead.
+- `make check` runs lint, types, and both gates.
 
 `make test-integration` starts throwaway datastores from
 `tests/integration/docker-compose.test.yaml` (ports 55432 and 56379); point the

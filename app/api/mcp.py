@@ -123,11 +123,8 @@ def _validate_transport_fields(transport: str, url: str | None, command: str | N
 
 
 def _registry(request: Request) -> McpRegistry:
-    state = request.app.state.gateway
-    registry = state.components.get("mcp_registry")
-    if not isinstance(registry, McpRegistry):
-        registry = McpRegistry(state.db, state.settings)
-        state.components["mcp_registry"] = registry
+    # Created by GatewayState.startup, shared with the agent executor.
+    registry: McpRegistry = request.app.state.gateway.components["mcp_registry"]
     return registry
 
 

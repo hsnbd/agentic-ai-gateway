@@ -91,3 +91,23 @@ dev = [
     "anthropic>=1.9.0",
     "openai>=3.20.0",
 ]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+# SQLAlchemy's asyncio layer switches greenlets; without this, code that runs
+# after an awaited query is not traced and reads as uncovered.
+concurrency = ["thread", "greenlet"]
+omit = ["app/ui_static/*"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+    "^\\s*\\.\\.\\.$",
+    "if __name__ == .__main__.:",
+]

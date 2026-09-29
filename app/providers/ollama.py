@@ -17,7 +17,6 @@ from app.core.schemas import (
     EmbeddingResponse,
     EmbeddingVector,
     FinishReason,
-    ImagePart,
     Message,
     Role,
     StreamChunk,
@@ -52,14 +51,11 @@ class OllamaProvider(Provider):
             for part in message.content:
                 if isinstance(part, TextPart):
                     text.append(part.text)
-                elif isinstance(part, ImagePart):
-                    if part.url.startswith("data:"):
-                        _, separator, data = part.url.partition(",")
-                        if separator:
-                            images.append(data)
-                    elif part.url.startswith(("http://", "https://")):
-                        # Ollama accepts raw image bytes, so remote URLs are not fetched.
-                        continue
+                elif part.url.startswith("data:"):
+                    _, separator, data = part.url.partition(",")
+                    if separator:
+                        images.append(data)
+                # Ollama takes raw image bytes, so remote image URLs are dropped, not fetched.
             payload["content"] = "".join(text)
 
         if images:
@@ -201,7 +197,7 @@ class OllamaProvider(Provider):
             async with self._client.stream(
                 "POST", url, json=payload, headers=self._headers(deployment)
             ) as response:
-                response.raise_for_status()
+                await self._raise_for_stream_status(response)
                 async for line in response.aiter_lines():
                     if not line.strip():
                         continue

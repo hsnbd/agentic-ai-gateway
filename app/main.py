@@ -132,12 +132,16 @@ def _register_exception_handlers(app: FastAPI) -> None:
         )
 
 
-def _mount_console(app: FastAPI, settings: Settings) -> None:
+#: Where `make ui-build` writes the console bundle.
+CONSOLE_DIR = os.path.join(os.path.dirname(__file__), "ui_static")
+
+
+def _mount_console(app: FastAPI, settings: Settings, static_dir: str | None = None) -> None:
     """Serve the built console SPA, when present."""
     if not settings.ui_enabled:
         return
 
-    static_dir = os.path.join(os.path.dirname(__file__), "ui_static")
+    static_dir = static_dir or CONSOLE_DIR
     index_file = os.path.join(static_dir, "index.html")
     if not os.path.isdir(static_dir) or not os.path.exists(index_file):
         logger.info("console assets not built; %s will 404", settings.ui_path)

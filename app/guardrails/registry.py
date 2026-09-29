@@ -169,10 +169,6 @@ def _build_rules(entries: Any, policy: str, phase: str) -> list[Rule]:
             raise ConfigurationError(
                 f"Invalid configuration for guardrail rule {name!r}: {exc}"
             ) from exc
-        if rule is None:
-            raise ConfigurationError(
-                f"Unknown guardrail rule type {rule_type!r} for rule {name!r}"
-            )
         rules.append(rule)
     return rules
 
@@ -183,7 +179,8 @@ def _make_rule(
     action: Action,
     severity: Severity,
     entry: dict[str, Any],
-) -> Rule | None:
+) -> Rule:
+    """Build one rule; ``rule_type`` is already one of ``_SUPPORTED_RULE_TYPES``."""
     if rule_type == "regex":
         return RegexRule(
             name,
@@ -232,12 +229,10 @@ def _make_rule(
             severity=severity,
             on_error=str(entry.get("on_error", "allow")),
         )
-    if rule_type == "pii":
-        return PiiRule(
-            name,
-            entry.get("entities", ()),
-            action,
-            severity,
-            mode=str(entry.get("mode", "full")),
-        )
-    return None
+    return PiiRule(
+        name,
+        entry.get("entities", ()),
+        action,
+        severity,
+        mode=str(entry.get("mode", "full")),
+    )

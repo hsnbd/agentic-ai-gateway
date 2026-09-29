@@ -82,7 +82,8 @@ export async function streamChat(
       done = next.done;
       buffer += decoder.decode(next.value, { stream: !done });
       const frames = buffer.split(/\r?\n\r?\n/);
-      buffer = frames.pop() ?? '';
+      // split() always yields at least one element: the unfinished tail.
+      buffer = frames.pop() as string;
       for (const frame of frames) if (consume(frame)) return { text, events, headers: response.headers };
     }
     if (buffer.trim()) consume(buffer);

@@ -99,7 +99,7 @@ class AnthropicDialect(Dialect):
                 for part in message.content:
                     if isinstance(part, TextPart):
                         content.append({"type": "text", "text": part.text})
-                    elif isinstance(part, ImagePart):
+                    else:
                         content.append(self._encode_image(part))
 
         for tool_call in message.tool_calls:
