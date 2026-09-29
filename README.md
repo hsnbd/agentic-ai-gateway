@@ -25,12 +25,15 @@ of them.
 - **Smart routing** — least-cost, lowest-latency, weighted, priority, and
   conditional strategies with health-aware load balancing
 - **Semantic caching** — embedding-similarity cache on Redis vector search
-- **RAG** — document ingestion, chunking, embedding, storage, and retrieval
-- **MCP** — Model Context Protocol servers proxied as gateway-callable tools
+- **RAG** — document ingestion, chunking, embedding, storage, and retrieval; any
+  chat request can be grounded in a collection with `aigw.rag`
+- **MCP and agents** — Model Context Protocol servers as gateway-callable tools,
+  and a server-side agent loop (`aigw.mcp`) that runs them for the model
 - **Tool calling** — normalized function calling across every provider
-- **Guardrails** — regex, denylist, and PII policies on input and output
-- **Cost control** — virtual API keys with budgets, rate limits, and model
-  allowlists
+- **Guardrails** — regex, denylist, PII, and LLM-judge policies on input and
+  output, including redaction of streamed responses
+- **Cost control** — virtual keys and teams with budgets, request/token/concurrency
+  limits, route and model allowlists; per-deployment rate limits with spill-over
 - **Observability** — Prometheus metrics, OpenTelemetry traces, structured logs
 - **Console UI** — React + MUI admin console served at `/ui`
 
@@ -69,7 +72,7 @@ The `aigateway` entry point covers the operations that must work before the
 console is reachable:
 
 ```bash
-uv run aigateway init-db                                  # create the schema
+uv run aigateway migrate                                  # create/upgrade the schema
 uv run aigateway create-admin --email you@example.com --password '...'
 uv run aigateway create-key --name smoke-test --budget 5  # prints the key once
 uv run aigateway routes                                   # list mounted routes

@@ -6,17 +6,17 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
 from app.api.deps import CurrentPrincipal, require_gateway_writer
 from app.core.errors import InvalidRequestError, NotFoundError
 from app.core.pipeline import RequestContext
-from app.core.schemas import ChatRequest, ChatResponse
+from app.core.schemas import ChatRequest, ChatResponse, RagOptions
 from app.core.state import GatewayState
 from app.db.models import RagChunk, RagDocument
-from app.rag.retrieve import RetrievedChunk, augment_request, build_context
+from app.rag.retrieve import RetrievedChunk
 from app.rag.service import DEFAULT_CHUNK_PAGE_SIZE, MAX_CHUNK_PAGE_SIZE, RagService
 
 router = APIRouter()
@@ -436,30 +436,37 @@ async def search(payload: SearchRequest, request: Request) -> SearchResponse:
 async def query(
     payload: RagQueryRequest, request: Request, principal: CurrentPrincipal
 ) -> RagQueryResponse:
-    service = _service(request)
-    query_text = payload.query or next(
-        (item.text() for item in reversed(payload.request.messages) if item.role.value == "user"),
-        "",
-    )
-    chunks = await service.search(
-        payload.collection_id,
-        query_text,
-        top_k=payload.top_k,
-        min_score=payload.min_score,
-        diversity=payload.diversity,
-        filters=payload.filters,
-    )
-    context = build_context(chunks, max_tokens=payload.max_context_tokens)
-    chat_request = augment_request(payload.request, context, mode=payload.mode)
     state = _state(request)
     pipeline = state.require_pipeline()
+    # Retrieval runs inside the pipeline (RagStage), exactly as for a chat
+    # request carrying `aigw.rag`, so both paths share one implementation.
+    try:
+        options = RagOptions(
+            collection_id=payload.collection_id,
+            query=payload.query,
+            top_k=payload.top_k,
+            min_score=payload.min_score,
+            diversity=payload.diversity,
+            filters=payload.filters,
+            max_context_tokens=payload.max_context_tokens,
+            mode=payload.mode,  # type: ignore[arg-type]
+        )
+    except ValidationError as exc:
+        raise InvalidRequestError(f"Invalid RAG options: {exc}") from exc
     # Run as the caller so their key's budget, limits, and model allowlist
     # apply. Console admins have no key of their own; like the playground,
     # they run with the master key.
     credential = principal.credential or state.settings.master_key.get_secret_value()
-    chat_request = chat_request.model_copy(
-        update={"stream": False, "metadata": {**chat_request.metadata, "api_key": credential}}
+    chat_request = payload.request.model_copy(
+        update={
+            "stream": False,
+            "rag": options,
+            "metadata": {**payload.request.metadata, "api_key": credential},
+        }
     )
     ctx = RequestContext(request=chat_request, state=state, route="/v1/rag/query")
     response = await pipeline.run(ctx)
-    return RagQueryResponse(response=response, sources=_chunk_response(chunks))
+    return RagQueryResponse(
+        response=response,
+        sources=[RetrievedChunkResponse.model_validate(item) for item in ctx.rag_sources],
+    )

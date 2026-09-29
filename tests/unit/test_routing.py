@@ -328,6 +328,28 @@ def test_conditional_prefers_cheap_tagged_for_short_prompts() -> None:
     assert "cheap" in reason
 
 
+def test_conditional_prefers_deployments_matching_request_tags() -> None:
+    frontier = make_deployment("frontier", tags=["frontier"], input_price=10.0)
+    eu = make_deployment("eu", tags=["eu", "cheap"], input_price=2.0)
+    eu_backup = make_deployment("eu_backup", tags=["eu"], input_price=3.0)
+    plain = make_deployment("plain", input_price=0.1)
+    candidates = [plain, frontier, eu_backup, eu]
+
+    chosen, reason = ConditionalStrategy().select(
+        candidates, make_request(tags=["eu"]), CircuitBreaker()
+    )
+    assert chosen.id == "eu", "cheapest deployment sharing a tag with the request"
+    assert "eu" in reason
+
+    order = ConditionalStrategy().order(candidates, make_request(tags=["eu"]), CircuitBreaker())
+    assert [d.id for d in order][:2] == ["eu", "eu_backup"], "other matches fall back first"
+
+    unmatched, _ = ConditionalStrategy().select(
+        candidates, make_request(tags=["nowhere"]), CircuitBreaker()
+    )
+    assert unmatched.id == "eu", "no tag match: the usual heuristics apply (cheap tag)"
+
+
 def test_get_strategy_resolves_aliases_and_defaults() -> None:
     assert get_strategy("cheapest").name == "least-cost"
     assert get_strategy("fastest").name == "lowest-latency"

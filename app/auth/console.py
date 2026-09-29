@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -43,11 +44,16 @@ def _create_token(
     email: str | None = None,
     role: str | None = None,
 ) -> str:
-    now = int(time.time())
+    now_ms = int(time.time() * 1000)
+    now = now_ms // 1000
     payload: dict[str, Any] = {
         "sub": user_id,
         "type": token_type,
+        "jti": uuid.uuid4().hex,
         "iat": now,
+        # Millisecond issue time, so "revoke everything issued before now"
+        # does not also reject a token issued later in the same second.
+        "iat_ms": now_ms,
         "exp": now + ttl_seconds,
     }
     if email is not None:

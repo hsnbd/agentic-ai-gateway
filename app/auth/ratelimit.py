@@ -1,4 +1,9 @@
-"""Redis-backed sliding-window request and token limiter."""
+"""Redis-backed rate limiters: requests per window, tokens per minute, concurrency.
+
+Every limiter fails open. Redis is a dependency of rate limiting, not of
+serving traffic, so an outage degrades to "unlimited" with a warning rather
+than to "every request rejected".
+"""
 
 from __future__ import annotations
 
@@ -18,7 +23,13 @@ local cost = tonumber(ARGV[4])
 redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
 local used = redis.call('ZCARD', key)
 if used + cost > limit then
-    return {0, math.max(0, limit - used), window}
+    -- The caller may retry once the oldest entry leaves the window.
+    local retry = window
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    if oldest[2] then
+        retry = math.max(1, math.ceil(tonumber(oldest[2]) + window - now))
+    end
+    return {0, math.max(0, limit - used), retry}
 end
 for i = 1, cost do
     redis.call('ZADD', key, now, ARGV[4 + i])
@@ -73,3 +84,81 @@ class SlidingWindowLimiter:
         except Exception:
             logger.warning("Rate limiter usage lookup failed", exc_info=True)
             return 0, float(max(0, limit))
+
+
+class TokenWindow:
+    """Tokens used in the last minute, from two per-minute counters.
+
+    Usage is the current minute's count plus the previous minute's, weighted by
+    how much of it still overlaps the sliding 60-second window. That is the
+    usual sliding-window-counter approximation: O(1) memory per key, unlike a
+    sorted set holding one member per token.
+    """
+
+    window_seconds = 60
+
+    def __init__(self, redis: Any) -> None:
+        self.redis = redis
+
+    def _keys(self, key: str, now: float) -> tuple[str, str, float]:
+        minute = int(now // self.window_seconds)
+        elapsed = (now % self.window_seconds) / self.window_seconds
+        return f"{key}:{minute}", f"{key}:{minute - 1}", elapsed
+
+    async def usage(self, key: str) -> float:
+        current, previous, elapsed = self._keys(key, time.time())
+        try:
+            values = await self.redis.mget(current, previous)
+        except Exception:
+            logger.warning("Token limiter unavailable; allowing request", exc_info=True)
+            return 0.0
+        now_count, prev_count = (float(value or 0) for value in values)
+        return now_count + prev_count * (1 - elapsed)
+
+    async def add(self, key: str, tokens: int) -> None:
+        if tokens <= 0:
+            return
+        current, _, _ = self._keys(key, time.time())
+        try:
+            pipeline = self.redis.pipeline(transaction=True)
+            pipeline.incrby(current, tokens)
+            pipeline.expire(current, self.window_seconds * 2)
+            await pipeline.execute()
+        except Exception:
+            logger.warning("Token limiter update failed", exc_info=True)
+
+    def seconds_until_reset(self) -> float:
+        return self.window_seconds - (time.time() % self.window_seconds)
+
+
+class ConcurrencyLimiter:
+    """Caps in-flight requests per key with a Redis counter.
+
+    The TTL is a safety net: if a process dies holding slots, they free
+    themselves once no request has touched the key for `ttl_seconds`.
+    """
+
+    def __init__(self, redis: Any, ttl_seconds: int = 300) -> None:
+        self.redis = redis
+        self.ttl_seconds = ttl_seconds
+
+    async def acquire(self, key: str, limit: int) -> bool:
+        try:
+            pipeline = self.redis.pipeline(transaction=True)
+            pipeline.incr(key)
+            pipeline.expire(key, self.ttl_seconds)
+            in_flight = int((await pipeline.execute())[0])
+        except Exception:
+            logger.warning("Concurrency limiter unavailable; allowing request", exc_info=True)
+            return True
+        if in_flight > limit:
+            await self.release(key)
+            return False
+        return True
+
+    async def release(self, key: str) -> None:
+        try:
+            if int(await self.redis.decr(key)) < 0:
+                await self.redis.set(key, 0, ex=self.ttl_seconds)
+        except Exception:
+            logger.warning("Concurrency limiter release failed", exc_info=True)

@@ -29,3 +29,10 @@ Scenarios share one database, so they never depend on each other's data:
 `<unique>` in step text becomes a fresh token and `<same>` repeats it.
 Reports (HTML, JUnit, JSON, with screenshots of failed UI steps) are written to
 `reports/`.
+
+When a `@ui` scenario fails, a Playwright trace is saved to `reports/traces/`
+(DOM snapshots, network, and console for every action). Open it with
+`npx playwright show-trace reports/traces/<file>.zip`. A step that exceeds the
+60-second step limit even though each browser action has a 15-second timeout
+means the whole machine paused (e.g. a laptop going to sleep mid-run), not
+that the app hung.

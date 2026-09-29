@@ -59,6 +59,18 @@ class LoginResponse(BaseModel):
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
     user: AdminUserResponse
+    #: Exchange at /auth/refresh for a new pair; each refresh token works once.
+    refresh_token: str | None = None
+    refresh_expires_in: int | None = None
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    #: Also revoke this refresh token, so the session cannot be renewed.
+    refresh_token: str | None = None
 
 
 class LogoutResponse(BaseModel):
@@ -270,6 +282,8 @@ class RequestLogResponse(BaseModel):
     cache_hit: bool
     guardrail_flagged: bool
     stream: bool
+    #: Tool calls the gateway executed (agent mode) or the model requested.
+    tool_calls_count: int = 0
 
 
 class RequestLogDetailResponse(RequestLogResponse):
@@ -360,7 +374,8 @@ class CacheStatsResponse(BaseModel):
         default=None, description="Unavailable when cache savings are not recorded."
     )
     estimated_latency_saved_ms: float | None = Field(
-        default=None, description="Unavailable because per-hit avoided latency is not recorded."
+        default=None,
+        description="Provider time avoided by cache hits (original latency minus lookup time).",
     )
 
 

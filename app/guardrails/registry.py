@@ -12,6 +12,8 @@ from app.core.errors import ConfigurationError
 from app.guardrails.base import (
     Action,
     GuardrailResult,
+    JudgeClient,
+    LlmJudgeRule,
     Phase,
     Rule,
     Severity,
@@ -72,6 +74,13 @@ class GuardrailRegistry:
         logger.warning("Unknown guardrail policy %r; falling back to 'default'", name)
         return self._policies["default"]
 
+    def set_judge(self, judge: JudgeClient) -> None:
+        """Give every LLM-judge rule the client it uses to call a model."""
+        for policy in self._policies.values():
+            for rule in (*policy.input_rules, *policy.output_rules):
+                if isinstance(rule, LlmJudgeRule):
+                    rule.judge = judge
+
     def list_policies(self) -> list[str]:
         return list(self._policies)
 
@@ -89,6 +98,8 @@ class GuardrailRegistry:
         for rule in rules:
             if isinstance(rule, LengthRule):
                 match = rule.evaluate(text, message_count=message_count)
+            elif isinstance(rule, LlmJudgeRule):
+                match = await rule.aevaluate(text)
             else:
                 match = rule.evaluate(text)
             if match is not None:
@@ -139,11 +150,6 @@ def _build_rules(entries: Any, policy: str, phase: str) -> list[Rule]:
             raise ConfigurationError(f"Rule {index} in policy {policy!r} must be a mapping")
         rule_type = entry.get("type")
         name = entry.get("name")
-        if rule_type == "llm_judge":
-            raise ConfigurationError(
-                f"Rule {name or index!r} uses type 'llm_judge', but LLM-judge guardrails "
-                "are not enabled in this version"
-            )
         if not isinstance(name, str) or not name:
             raise ConfigurationError(f"Rule {index} in policy {policy!r} requires a name")
         if not isinstance(rule_type, str) or rule_type not in _SUPPORTED_RULE_TYPES:
@@ -215,6 +221,16 @@ def _make_rule(
             action,
             severity,
             min_hits=int(entry.get("min_hits", 1)),
+        )
+    if rule_type == "llm_judge":
+        return LlmJudgeRule(
+            str(entry["model"]),
+            str(entry["prompt"]),
+            float(entry.get("threshold", 0.5)),
+            name=name,
+            action=action,
+            severity=severity,
+            on_error=str(entry.get("on_error", "allow")),
         )
     if rule_type == "pii":
         return PiiRule(

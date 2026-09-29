@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import abc
+import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -157,8 +159,28 @@ class Rule(abc.ABC):
         return apply_spans(text, self.redaction_spans(text))
 
 
+#: Sends (model, instructions, text) to a model and returns its raw reply.
+JudgeClient = Callable[[str, str, str], Awaitable[str]]
+
+_JUDGE_INSTRUCTIONS = (
+    "You are a guardrail judge for an AI gateway. Decide how strongly the text "
+    "below violates this policy: {policy}\n"
+    'Reply with JSON only, e.g. {{"score": 0.0, "reason": "..."}}, where score is '
+    "0 (no violation) to 1 (clear violation)."
+)
+
+
 class LlmJudgeRule(Rule):
-    """Reserved interface for model-assisted policy judgments; not available yet."""
+    """Ask a model whether text violates a natural-language policy.
+
+    The judge is called through the gateway's provider registry (not the chat
+    pipeline, so it is not itself guarded, cached, or billed to the caller).
+    A score at or above `threshold` is a match. If the judge fails or replies
+    with something unparseable, `on_error` decides: "allow" (default, fail
+    open) or "block" (fail closed, which applies the rule's action).
+    """
+
+    is_async = True
 
     def __init__(
         self,
@@ -169,11 +191,57 @@ class LlmJudgeRule(Rule):
         name: str = "llm_judge",
         action: Action = Action.FLAG,
         severity: Severity = Severity.MEDIUM,
+        on_error: str = "allow",
     ) -> None:
         super().__init__(name, action, severity)
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("threshold must be between 0 and 1")
+        if on_error not in {"allow", "block"}:
+            raise ValueError("on_error must be 'allow' or 'block'")
         self.model = model
         self.prompt = prompt
         self.threshold = threshold
+        self.on_error = on_error
+        self.judge: JudgeClient | None = None
 
     def evaluate(self, text: str) -> RuleMatch | None:
-        raise NotImplementedError("LLM-judge guardrails are not enabled in this version.")
+        # Judging needs a model call; the registry awaits `aevaluate` instead.
+        return None
+
+    async def aevaluate(self, text: str) -> RuleMatch | None:
+        if not text.strip():
+            return None
+        try:
+            if self.judge is None:
+                raise RuntimeError("no judge client is configured")
+            reply = await self.judge(
+                self.model, _JUDGE_INSTRUCTIONS.format(policy=self.prompt), text
+            )
+            score, reason = _parse_verdict(reply)
+        except Exception as exc:
+            if self.on_error == "block":
+                return self._match(text, 1.0, f"judge unavailable: {exc}")
+            return None
+        return self._match(text, score, reason) if score >= self.threshold else None
+
+    def _match(self, text: str, score: float, reason: str) -> RuleMatch:
+        return RuleMatch(
+            rule_name=self.name,
+            action=self.action,
+            severity=self.severity,
+            match_count=1,
+            excerpt=text[:80],
+            details={"score": score, "reason": reason, "model": self.model},
+        )
+
+
+def _parse_verdict(reply: str) -> tuple[float, str]:
+    """Pull `{"score": ..., "reason": ...}` out of a reply that may wrap it in prose."""
+    start, end = reply.find("{"), reply.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError(f"judge reply is not JSON: {reply[:120]!r}")
+    verdict = json.loads(reply[start : end + 1])
+    score = float(verdict["score"])
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"judge score {score} is outside 0..1")
+    return score, str(verdict.get("reason", ""))

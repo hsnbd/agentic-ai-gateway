@@ -56,6 +56,13 @@ class GatewayState:
 
         # Built last: stages resolve providers, the database, and Redis from
         # this same object, so they must already exist.
+        # Shared by the HTTP routes, the RAG pre-stage, and the agent executor.
+        from app.mcp.registry import McpRegistry
+        from app.rag.service import RagService
+
+        self.components["rag_service"] = RagService(self)
+        self.components["mcp_registry"] = McpRegistry(self.db, self.settings)
+
         from app.core.builder import build_pipeline
 
         self.pipeline = build_pipeline(self)
@@ -97,6 +104,9 @@ class GatewayState:
         return self.pipeline
 
     async def shutdown(self) -> None:
+        registry = self.components.get("mcp_registry")
+        if registry is not None:
+            await registry.close()
         if self.redis is not None:
             await self.redis.aclose()
             self.redis = None

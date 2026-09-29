@@ -71,8 +71,8 @@ Test suites referenced below:
 | Circuit breaker (closed / open / half-open) | ✅ | unit |
 | Model allow / block lists on virtual keys | ✅ | unit, int (`test_policies_http.py`) |
 | `MAX_RETRIES` means *retries*, not total attempts | ✅ | **fixed** (was off by one); int |
-| Conditional routing on request `tags` (as documented) | ⛔ | strategy reads deployment tags only |
-| Deployment `rpm_limit` / `tpm_limit` enforcement | ⛔ | stored, never enforced |
+| Conditional routing on request `tags`: matching deployments preferred (cheapest first), other matches fall back first | ✅ | **new**; unit, int (`test_routing_cache_http.py`), e2e |
+| Deployment `rpm_limit` / `tpm_limit`: saturated deployments are skipped (fallback); all saturated → 429 | ✅ | **new**; int (`test_limits_http.py`) |
 
 ## 4. Semantic cache
 
@@ -84,8 +84,8 @@ Test suites referenced below:
 | Admin: stats, entries, invalidate | ✅ | unit, int |
 | Cache hit served over HTTP against real Redis Stack | ✅ | int (`test_accounting_http.py`) |
 | Cache hits are not billed; `cost_saved_usd` recorded | ✅ | **fixed**; int |
-| `X-Gateway-Cache-Similarity` response header (documented) | ⛔ | not emitted |
-| `estimated_latency_saved_ms` in cache stats | ⛔ | always `null` |
+| `X-Gateway-Cache-Similarity` response header on hits (unary and streamed) | ✅ | **new**; int, e2e |
+| `estimated_latency_saved_ms` in cache stats (original latency minus lookup time) | ✅ | **new**; int, e2e |
 
 ## 5. RAG
 
@@ -97,8 +97,9 @@ Test suites referenced below:
 | Chunk inspector (list / get with embedding preview) | ✅ | unit, int |
 | `POST /v1/rag/search` with MMR diversity and filters | ✅ | unit, int |
 | `POST /v1/rag/query` (retrieve + chat), runs as the calling key | ✅ | **fixed** (was always 500); int |
-| RAG augmentation inside the chat pipeline (`RagService.augment`) | ⛔ | never called |
-| `RAG_INDEX_NAME` setting | ⛔ | never read |
+| RAG in ordinary chat requests (`aigw.rag`, both dialects, streaming; sources in `aigw.sources` + `X-Gateway-RAG-Sources`) | ✅ | **new**: `RagStage` after auth, before guardrails/cache; int (`test_agentic_http.py`), e2e (`agentic.feature`) |
+| Retrieved text screened by input guardrails; cache scoped per collection | ✅ | int |
+| One RediSearch index per collection (`aigw:rag:<collection>:idx`) | ✅ | dead `RAG_INDEX_NAME` setting removed; int |
 | Non-text ingestion (PDF, DOCX) | 💡 | |
 
 ## 6. MCP and tools
@@ -112,9 +113,9 @@ Test suites referenced below:
 | Only admins may register MCP servers (stdio runs host commands) | ✅ | **fixed** (security); int |
 | HTTP MCP servers mounted at a path (e.g. `/mcp`) are reachable | ✅ | **fixed**: client posted to `/mcp/`, so such servers were always unhealthy; int |
 | `MCP_TIMEOUT_SECONDS` / `MCP_TOOL_CACHE_TTL_SECONDS` settings | ✅ | **fixed**: declared and documented |
-| MCP clients / stdio processes closed on shutdown | ⛔ | leaked |
-| Agentic tool loop (`run_agentic_loop`) wired into chat | ⛔ | implemented, never called |
-| Tool calls routed through the pipeline (logging, cost, guardrails) | ⛔ | documented, not implemented |
+| MCP clients / stdio processes closed on shutdown | ✅ | **fixed**: `McpRegistry.close()` in `GatewayState.shutdown` |
+| Server-side agent loop (`aigw.mcp`): MCP tools offered and executed until the model answers; client tools returned; `max_iterations` | ✅ | **new**: `AgenticExecutor`; int, e2e |
+| Agent tool calls logged (`stage_timings.tool_calls`, `tool_calls_count`), usage summed across hops, auth/budget once per request | ✅ | int |
 
 ## 7. Guardrails
 
@@ -124,8 +125,8 @@ Test suites referenced below:
 | Actions: block, redact, flag; input and output stages | ✅ | unit, int, e2e |
 | Violations persisted and listed (`/admin/api/guardrails/violations`) | ✅ | unit, int |
 | Block / redact observed over HTTP (input PII, prompt injection, output secrets, per-key policy) | ✅ | int (`test_policies_http.py`) |
-| Output guardrails on streamed responses | ⛔ | now run after the stream (flag + record), but cannot redact text already sent |
-| LLM-judge guardrail | ⛔ | raises `NotImplementedError` |
+| Output guardrails on streamed responses: redaction across chunk boundaries (holdback window), block ends the stream | ✅ | **new** `StreamRedactor`; unit, int, e2e |
+| LLM-judge guardrail (`type: llm_judge`, threshold, `on_error` allow/block); judge calls bypass the pipeline and are not billed | ✅ | **new**; unit, int (`test_llm_judge_http.py`), e2e (`judged` policy in `config/guardrails.eval.yaml`) |
 
 ## 8. Auth, virtual keys, quotas
 
@@ -137,8 +138,8 @@ Test suites referenced below:
 | RPM rate limit (Redis sliding window, fail-open) → 429 + `Retry-After` | ✅ | unit, int |
 | Budgets on keys and teams (charged for unary and streamed requests) | ✅ | **fixed** (spend was never recorded); int |
 | Teams CRUD and team usage | ✅ | int |
-| Key `tpm_limit`, `max_parallel_requests`, `allowed_routes` | ⛔ | stored, never enforced |
-| `Retry-After` reflects real wait time | ⛔ | always the full 60 s window |
+| Key `tpm_limit`, `max_parallel_requests`, `allowed_routes` | ✅ | **new**; int, e2e |
+| `Retry-After` reflects real wait time (rounded up, never 0) | ✅ | **fixed**; int |
 
 ## 9. Accounting and observability
 
@@ -153,7 +154,7 @@ Test suites referenced below:
 | Metrics recorded exactly once (cache lookups, retries, fallbacks, TTFT) | ✅ | **fixed**; int |
 | Structured logging honours `LOG_LEVEL` / `LOG_FORMAT` | ✅ | **fixed**: configured in `create_app` |
 | OpenTelemetry tracing (`TRACING_ENABLED`, `OTLP_ENDPOINT`) | ✅ | **fixed**; int |
-| `aigw_active_requests` gauge, rate-limit-hit counter | ⛔ | never updated |
+| `aigw_active_requests` gauge, rate-limit-hit counter (`scope` = key_rpm / key_tpm / key_parallel / deployment) | ✅ | **fixed**; int |
 
 ## 10. Admin API (`/admin/api`)
 
@@ -168,8 +169,8 @@ Test suites referenced below:
 | Usage by dimension, usage costs | ✅ | unit, int |
 | Deployments, models, provider status, health check | ✅ | **fixed**: health check 404'd for every generated id (`provider/model`); int |
 | System info reports RAG / MCP enabled | ✅ | **fixed**; int |
-| Refresh tokens | ⛔ | `create_refresh_token` has no endpoint |
-| Server-side logout / token revocation | ⛔ | logout is a no-op |
+| Refresh tokens with rotation (`/auth/refresh`, single use); console renews expired sessions silently | ✅ | **new**; int (`test_sessions_http.py`), e2e |
+| Server-side logout and revocation (Redis denylist); password, role, or status change signs the user out everywhere | ✅ | **new**; int, e2e |
 
 ## 11. Console UI (`/ui`)
 
@@ -198,8 +199,8 @@ All console scenarios run in Chromium via Playwright (`e2e/features/ui`).
 | Lint rule against render-time use-before-define | ✅ | `@typescript-eslint/no-use-before-define` |
 | Playground RAG mode, compare mode, replay from log | 🟡 | not covered end-to-end |
 | Keys: regenerate and edit limits from the UI | 🟡 | API covered (int, e2e); UI not |
-| Teams management UI | 💡 | API exists (`/admin/api/teams`), no page |
-| Logs CSV export button | 💡 | API exists (`/admin/api/logs/export`), no button |
+| Teams page (create, edit, delete, usage; read-only for viewers) | ✅ | **new**; e2e (`teams.feature`) |
+| Logs CSV export button (uses the current filters) | ✅ | **new**; e2e |
 
 ## 12. CLI, packaging, deployment
 
@@ -212,7 +213,7 @@ All console scenarios run in Chromium via Playwright (`e2e/features/ui`).
 | Grafana dashboard + Prometheus scrape config | 🟡 | manual |
 | Consistent default port: 4000 locally (`make dev`, `aigateway serve`, Vite proxy, smoke.sh), 8000 in the container | ✅ | **fixed** |
 | `ENVIRONMENT` documented correctly (`dev`/`staging`/`prod`) | ✅ | **fixed** docs |
-| Alembic migrations (`make migrate`) | ⛔ | no migrations directory |
+| Alembic migrations: baseline `0001`, `aigateway migrate` / `db-stamp`, Helm init container, E2E stack boots from migrations | ✅ | **new**; int (`test_migrations.py`: no model/migration drift, round trip, stamp) |
 | Python version pinned to 3.12 for local dev | ✅ | `.python-version` |
 
 ## 13. Quality and CI
@@ -221,7 +222,7 @@ All console scenarios run in Chromium via Playwright (`e2e/features/ui`).
 |---|---|---|
 | Unit suite | ✅ | `make test-unit` |
 | Integration suite on real Postgres + Redis Stack | ✅ | `make test-integration` |
-| Cucumber + Playwright E2E suite (API via official SDKs + console UI) | ✅ | 70 scenarios / 360 steps, `make e2e` |
+| Cucumber + Playwright E2E suite (API via official SDKs + console UI) | ✅ | 86 scenarios / 445 steps, `make e2e` |
 | SDK compatibility script (`scripts/agent_compat.py`) | ✅ | 10/10 against fake upstream |
 | Evaluation harness (`scripts/evaluate.py`) | ✅ | 100% success, failover and routing verified |
 | Deterministic fakes: OpenAI upstream (bag-of-words embeddings), MCP server (HTTP + stdio) | ✅ | `scripts/fake_upstream.py`, `scripts/fake_mcp_server.py` |
@@ -232,15 +233,17 @@ All console scenarios run in Chromium via Playwright (`e2e/features/ui`).
 
 ## Proposed next steps
 
-Ordered by value; none are started.
+The ten items from the previous list are all done: RAG in chat, the agent
+loop, key and deployment limits, streaming output guardrails, Alembic
+migrations, refresh tokens and revocation, the Teams page and CSV export, tag
+routing, cache similarity and latency saved, and the LLM judge.
 
-1. **RAG in the chat pipeline**: call `RagService.augment` for requests that name a collection, so any client (not only `/v1/rag/query`) gets grounded answers.
-2. **Agentic tool loop**: wire `run_agentic_loop` so MCP tools can be auto-injected and executed server-side, with each tool call logged and costed.
-3. **Enforce the stored-but-ignored limits**: key `tpm_limit` / `max_parallel_requests` / `allowed_routes`, deployment `rpm_limit` / `tpm_limit`.
-4. **Streaming output guardrails**: buffer-and-release or chunk-level redaction so secrets cannot leak through streams.
-5. **Alembic migrations** so schema changes are safe after the first deploy (`make migrate` currently has nothing to run).
-6. **Refresh tokens and server-side logout** (token revocation list in Redis).
-7. **Teams page and logs CSV export button** in the console (APIs already exist).
-8. **Conditional routing on request `tags`**, as documented.
-9. **`X-Gateway-Cache-Similarity` header** and recorded latency savings for cache hits.
-10. **LLM-judge guardrail**.
+What is still open, ordered by value; none are started:
+
+1. **Guardrails on tool traffic**: scan MCP tool arguments and results in the agent loop, not only prompts and answers.
+2. **Streaming agent hops**: stream intermediate model turns instead of only the final answer.
+3. **Non-text RAG ingestion** (PDF, DOCX, HTML) and background ingestion for large documents.
+4. **Coverage report and gate** in CI.
+5. **Load test in CI** (`scripts/loadtest.py`) with latency budgets.
+6. **Repo-wide `ruff format`** once, then enforced in CI.
+7. **Provider adapters against live APIs**: an opt-in `live`-marked suite for Anthropic, Gemini, and Ollama, which today are covered only by mocked unit tests.

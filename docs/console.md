@@ -15,6 +15,7 @@ anything you can do in the browser you can also do with `curl`.
 - [Roles](#roles)
 - [Dashboard](#dashboard)
 - [Keys](#keys)
+- [Teams](#teams)
 - [Models and routing](#models-and-routing)
 - [Logs](#logs)
 - [Usage](#usage)
@@ -70,9 +71,17 @@ aigateway create-admin --email admin@example.com --password "$ADMIN_PASSWORD" --
 
 ### Sessions
 
-Sign-in returns a JWT valid for `JWT_ACCESS_TTL_SECONDS` (default one hour).
-The console stores it and attaches it to every admin request. When it expires
-you are returned to the login page. Set `JWT_SECRET` to a real random value of
+Sign-in returns a short-lived access token (`JWT_ACCESS_TTL_SECONDS`, default
+one hour) and a refresh token (`JWT_REFRESH_TTL_SECONDS`, default seven days).
+When the access token expires, the console trades the refresh token for a new
+pair without interrupting you; each refresh token works once. You are returned
+to the login page only when the refresh token is also expired or revoked.
+
+**Signing out is enforced by the server.** Sign out revokes both tokens, so a
+copied token stops working immediately. Changing a password, or an admin
+changing someone's role or deactivating them, signs that user out of every
+session. Revocations live in Redis; if Redis is unreachable, tokens are checked
+only for signature and expiry until it returns. Set `JWT_SECRET` to a real random value of
 at least 32 bytes in production — the default is a placeholder, and anyone who
 knows it can mint an admin session.
 
@@ -80,7 +89,7 @@ knows it can mint an admin session.
 
 | Role | Can read | Can change |
 |---|---|---|
-| `viewer` | Dashboard, Models, Logs, Usage, Guardrails, Cache, RAG, MCP | nothing |
+| `viewer` | Dashboard, Teams, Models, Logs, Usage, Guardrails, Cache, RAG, MCP | nothing |
 | `admin` | everything, plus Keys, Settings, Playground | everything |
 
 Viewers get read access to the operational pages because the common case for a
@@ -136,6 +145,14 @@ carries:
 limits, and usage history. **Revoke** disables it immediately. Prefer rotation
 for routine credential hygiene and revocation for a suspected leak.
 
+## Teams
+
+Teams group virtual keys under a shared budget. The page lists each team's
+budget, spend, and budget period; the usage button shows the last 30 days of
+requests, tokens, and cost across all of the team's keys. Admins create, edit,
+and delete teams, and assign keys to a team from the Keys page. Deleting a team
+keeps its keys working; they simply stop sharing its budget.
+
 ## Models and routing
 
 Read-only inspection of what the gateway will actually do with a request.
@@ -169,6 +186,9 @@ The attempt list is the most useful part of that drawer. A request that
 succeeded after two failed providers looks identical to a clean one in the list
 view — the attempt history is what tells you the gateway absorbed an outage on
 your behalf.
+
+**Export CSV** downloads every log row matching the current filters (not just
+the visible page) with the same columns as the table.
 
 Prompt and response bodies sit behind an explicit **reveal** action. They are
 subject to the redaction policy and the viewer role, so turning on logging does

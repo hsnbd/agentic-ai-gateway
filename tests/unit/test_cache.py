@@ -347,9 +347,10 @@ async def test_stats_and_invalidation_use_entry_keys_and_redis_counters() -> Non
     await cache.lookup(make_context())
     await cache.lookup(make_context(temperature=0.1))
 
-    assert await cache.stats() == {"entries": 1, "hits": 1, "misses": 1}
+    counters = {"hits": 1, "misses": 1, "latency_saved_ms": 0.0}
+    assert await cache.stats() == {"entries": 1, **counters}
     assert await cache.invalidate(cache.build_namespace(ctx)) == 1
-    assert await cache.stats() == {"entries": 0, "hits": 1, "misses": 1}
+    assert await cache.stats() == {"entries": 0, **counters}
 
 
 class FakeEmbeddingProvider:

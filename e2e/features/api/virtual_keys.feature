@@ -40,3 +40,13 @@ Feature: Virtual keys, quotas, and budgets
     When I use the regenerated key
     And I send a chat request for model "eval-chat" saying "hi"
     Then the response status is 200
+
+  Scenario: A key's concurrent requests are capped
+    Given a virtual key allowing 1 request in flight
+    When I send 2 slow chat requests at once
+    Then one request succeeds and one is rejected with status 429
+
+  Scenario: A key can be limited to specific API routes
+    Given a virtual key allowed only on "/v1/embeddings"
+    When I send a chat request for model "eval-chat" saying "hi"
+    Then the response status is 403

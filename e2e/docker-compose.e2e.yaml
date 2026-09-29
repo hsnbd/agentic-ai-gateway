@@ -56,9 +56,19 @@ services:
       timeout: 3s
       retries: 30
 
+  # Same command as the Helm init container: the schema comes from Alembic.
+  migrate:
+    <<: *image
+    entrypoint: ["python", "-m", "app.cli", "migrate"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aigateway:aigateway@postgres:5432/aigateway
+    depends_on:
+      postgres: {condition: service_healthy}
+
   gateway:
     <<: *image
     depends_on:
+      migrate: {condition: service_completed_successfully}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
       fake-upstream: {condition: service_healthy}
@@ -67,7 +77,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://aigateway:aigateway@postgres:5432/aigateway
       REDIS_URL: redis://redis:6379/0
       MODELS_CONFIG_PATH: config/models.eval.yaml
+      GUARDRAILS_CONFIG_PATH: config/guardrails.eval.yaml
       EVAL_UPSTREAM_URL: http://fake-upstream:4100
+      AUTO_CREATE_SCHEMA: "false"
       MASTER_KEY: sk-e2e-master-key
       JWT_SECRET: e2e-jwt-secret-that-is-long-enough-for-hs256
       BOOTSTRAP_ADMIN_EMAIL: admin@e2e.test

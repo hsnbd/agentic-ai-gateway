@@ -23,7 +23,14 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import AdminUserOnly, CurrentAdmin, Pagination, get_gateway_state
+from app.api.deps import (
+    AdminUserOnly,
+    BearerCredentials,
+    CurrentAdmin,
+    Pagination,
+    get_gateway_state,
+    token_revocation,
+)
 from app.api.schemas_admin import (
     AdminUserCreateRequest,
     AdminUserPasswordRequest,
@@ -46,12 +53,14 @@ from app.api.schemas_admin import (
     KeyUpdateRequest,
     LoginRequest,
     LoginResponse,
+    LogoutRequest,
     LogoutResponse,
     ModelResponse,
     Page,
     PlaygroundRequest,
     PlaygroundResponse,
     ProviderStatusResponse,
+    RefreshRequest,
     RequestAttemptResponse,
     RequestLogDetailResponse,
     RequestLogResponse,
@@ -68,6 +77,8 @@ from app.api.schemas_admin import (
 )
 from app.auth.console import (
     create_access_token,
+    create_refresh_token,
+    decode_token,
     hash_password,
     verify_password,
 )
@@ -238,6 +249,7 @@ def _log_response(row: RequestLog) -> RequestLogResponse:
         cache_hit=row.cache_hit,
         guardrail_flagged=row.guardrail_flagged,
         stream=row.stream,
+        tool_calls_count=row.tool_calls_count or 0,
     )
 
 
@@ -292,17 +304,61 @@ async def login(
         user.last_login_at = datetime.now(UTC)
         await session.flush()
         user_copy = user
-    token = create_access_token(user_copy.id, user_copy.email, user_copy.role)
+    return _session_response(user_copy)
+
+
+def _session_response(user: AdminUser) -> LoginResponse:
+    settings = get_settings()
     return LoginResponse(
-        access_token=token,
-        expires_in=get_settings().jwt_access_ttl_seconds,
-        user=_user_response(user_copy),
+        access_token=create_access_token(user.id, user.email, user.role),
+        expires_in=settings.jwt_access_ttl_seconds,
+        refresh_token=create_refresh_token(user.id),
+        refresh_expires_in=settings.jwt_refresh_ttl_seconds,
+        user=_user_response(user),
     )
 
 
+@router.post("/auth/refresh", response_model=LoginResponse)
+async def refresh_session(
+    body: RefreshRequest,
+    state: Annotated[GatewayState, Depends(get_gateway_state)],
+) -> LoginResponse:
+    """Trade a refresh token for a new access + refresh pair (rotation).
+
+    The presented refresh token is revoked, so a stolen copy that has already
+    been used by its owner is rejected, and vice versa.
+    """
+    try:
+        claims = decode_token(body.refresh_token, "refresh")
+    except GatewayError as exc:
+        raise HTTPException(status_code=401, detail=exc.message) from exc
+    revocation = token_revocation(state)
+    if await revocation.is_revoked(claims):
+        raise HTTPException(status_code=401, detail="Refresh token has been revoked")
+    async with state.db.session() as session:
+        user = await session.get(AdminUser, str(claims.get("sub")))
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=401, detail="Invalid or inactive console user")
+        user_copy = user
+    await revocation.revoke(claims)
+    return _session_response(user_copy)
+
+
 @router.post("/auth/logout", response_model=LogoutResponse)
-async def logout(_: CurrentAdmin) -> LogoutResponse:
-    """Console access tokens are stateless; clients discard the token on logout."""
+async def logout(
+    _: CurrentAdmin,
+    state: Annotated[GatewayState, Depends(get_gateway_state)],
+    credentials: BearerCredentials,
+    body: LogoutRequest | None = None,
+) -> LogoutResponse:
+    """Revoke the presented access token and, if given, its refresh token."""
+    revocation = token_revocation(state)
+    if credentials is not None:
+        with contextlib.suppress(GatewayError):
+            await revocation.revoke(decode_token(credentials.credentials, "access"))
+    if body is not None and body.refresh_token:
+        with contextlib.suppress(GatewayError):
+            await revocation.revoke(decode_token(body.refresh_token, "refresh"))
     return LogoutResponse()
 
 
@@ -324,6 +380,8 @@ async def change_password(
         if db_user is None:
             raise HTTPException(status_code=404, detail="Console user not found")
         db_user.password_hash = hash_password(body.new_password)
+    # Sign out every existing session; the user logs in again with the new password.
+    await token_revocation(state).revoke_user(user.id)
     return LogoutResponse()
 
 
@@ -889,6 +947,8 @@ async def update_admin_user(
         for field, value in changes.items():
             setattr(user, field, value)
         await session.flush()
+    # A demoted or deactivated user must not keep acting on an old token.
+    await token_revocation(state).revoke_user(user_id)
     return _user_response(user)
 
 
@@ -913,6 +973,7 @@ async def delete_admin_user(
                     status_code=409, detail="The last active admin cannot be deleted"
                 )
         await session.delete(user)
+    await token_revocation(state).revoke_user(user_id)
     return LogoutResponse()
 
 
@@ -929,6 +990,7 @@ async def change_own_password(
         if user is None or not user.is_active:
             raise HTTPException(status_code=401, detail="Console user is no longer active")
         user.password_hash = hash_password(body.new_password)
+    await token_revocation(state).revoke_user(actor.id)
     return LogoutResponse()
 
 
@@ -1567,7 +1629,12 @@ async def cache_stats(
         similarity_threshold=state.settings.cache_similarity_threshold,
         index_size_bytes=index_size_bytes,
         estimated_cost_saved_usd=float(saved_cost) if saved_cost is not None else 0.0,
-        estimated_latency_saved_ms=None,
+        # None when the cache backend does not measure it, rather than a fake 0.
+        estimated_latency_saved_ms=(
+            float(values["latency_saved_ms"])
+            if available and values.get("latency_saved_ms") is not None
+            else None
+        ),
     )
 
 

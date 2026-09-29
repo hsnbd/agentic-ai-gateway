@@ -1,7 +1,7 @@
 import { useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Alert, Box, Button, Card, CardContent, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Divider, FormControlLabel, LinearProgress, MenuItem, Paper, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
-import { apiRequest } from '../api/client';
+import { apiRequest, refreshSession, session } from '../api/client';
 import { ragKeys, useRagCollections, useRagDocuments, type RagCollection, type RagDocument, type RagSearchResponse, type RagSearchResult } from '../api/hooks/useRagCollections';
 import { useAuth } from '../auth/AuthProvider';
 import { ConfirmDialog, EmptyState, ErrorState, LoadingState, PageHeader } from '../components/Shared';
@@ -37,11 +37,11 @@ function responseError(payload: unknown, fallback: string): string {
   return fallback;
 }
 
-function uploadWithProgress(collectionId: string, body: FormData, onProgress: (value: number) => void): Promise<RagDocument> {
+function uploadWithProgress(collectionId: string, body: FormData, onProgress: (value: number) => void, retried = false): Promise<RagDocument> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `/v1/rag/collections/${encodeURIComponent(collectionId)}/documents`);
-    const token = localStorage.getItem('aigateway.console.token');
+    const token = session.token();
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
@@ -51,7 +51,14 @@ function uploadWithProgress(collectionId: string, body: FormData, onProgress: (v
       try { payload = xhr.responseText ? JSON.parse(xhr.responseText) as unknown : null; }
       catch { reject(new Error(`Upload failed with status ${xhr.status}: response was not valid JSON`)); return; }
       if (xhr.status === 401) {
-        localStorage.removeItem('aigateway.console.token');
+        // Renew an expired session once and resend; otherwise sign out.
+        if (!retried) {
+          void refreshSession().then((ok) => ok
+            ? uploadWithProgress(collectionId, body, onProgress, true).then(resolve, reject)
+            : reject(new Error('Your console session has ended. Sign in again.')));
+          return;
+        }
+        session.clear();
         if (window.location.pathname !== '/ui/login') window.location.assign('/ui/login');
       }
       if (xhr.status < 200 || xhr.status >= 300) {

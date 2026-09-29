@@ -10,10 +10,11 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from app.core.errors import GuardrailViolationError
 from app.core.schemas import (
     ChatRequest,
     ChatResponse,
@@ -25,6 +26,7 @@ from app.core.schemas import (
     ToolCall,
     Usage,
 )
+from app.observability import metrics
 
 if TYPE_CHECKING:
     from app.core.state import GatewayState
@@ -78,6 +80,13 @@ class RequestContext:
     cache_result: str | None = None
     cost_saved_usd: float = 0.0
 
+    # RAG and agent loop
+    #: Chunks retrieved for `aigw.rag`, as plain dicts for the response.
+    rag_sources: list[dict[str, Any]] = field(default_factory=list)
+    #: MCP tool calls executed server-side for `aigw.mcp`.
+    tool_executions: list[dict[str, Any]] = field(default_factory=list)
+    stop_reason: str | None = None
+
     # Guardrails
     guardrail_flagged: bool = False
     guardrail_results: dict[str, Any] = field(default_factory=dict)
@@ -89,6 +98,9 @@ class RequestContext:
 
     # Diagnostics
     stage_timings: dict[str, float] = field(default_factory=dict)
+    #: Run once the request finishes, however it ends (e.g. release a
+    #: concurrency slot taken by the auth stage).
+    cleanups: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
     trace_id: str | None = None
 
     def elapsed_ms(self) -> float:
@@ -100,7 +112,8 @@ class RequestContext:
     def record_attempt(self, deployment_id: str) -> None:
         self.attempted.append(deployment_id)
         self.attempt_count += 1
-        if len(self.attempted) > 1:
+        # Retries on one deployment and agent hops are not fallbacks.
+        if len(set(self.attempted)) > 1:
             self.fallback_used = True
 
     @property
@@ -151,10 +164,13 @@ class Pipeline:
 
     async def run(self, ctx: RequestContext) -> ChatResponse:
         try:
-            return await self._run(ctx)
+            with metrics.track_active(ctx.model):
+                return await self._run(ctx)
         except Exception as exc:
             await self._notify_failure(ctx, exc)
             raise
+        finally:
+            await _run_cleanups(ctx)
 
     async def _run(self, ctx: RequestContext) -> ChatResponse:
         short_circuit = await self._run_pre_stages(ctx)
@@ -192,6 +208,14 @@ class Pipeline:
         violation, but cannot un-send the text.
         """
         try:
+            with metrics.track_active(ctx.model):
+                async for chunk in self._stream(ctx):
+                    yield chunk
+        finally:
+            await _run_cleanups(ctx)
+
+    async def _stream(self, ctx: RequestContext) -> AsyncIterator[StreamChunk]:
+        try:
             short_circuit = await self._run_pre_stages(ctx)
             if short_circuit is not None:
                 async for chunk in _replay_as_stream(short_circuit):
@@ -200,13 +224,30 @@ class Pipeline:
                 return
 
             accumulator = _StreamAccumulator(ctx.request.model)
+            guard = self._stream_guard(ctx)
+            redactor = guard.stream_redactor(ctx) if guard is not None else None
             started = time.perf_counter()
             try:
                 async for chunk in self.executor.execute_stream(ctx):
                     if ctx.time_to_first_token_ms is None and chunk.content:
                         ctx.time_to_first_token_ms = ctx.elapsed_ms()
+                    # The accumulator keeps the raw text, so the output stage
+                    # still sees (and records) what the model actually said.
                     accumulator.add(chunk)
-                    yield chunk
+                    if redactor is None:
+                        yield chunk
+                        continue
+                    filtered = _filter_chunk(chunk, redactor)
+                    if filtered is not None:
+                        yield filtered
+                if redactor is not None:
+                    rest = redactor.finish()
+                    if rest:
+                        yield StreamChunk(model=accumulator.model, content=rest)
+            except GuardrailViolationError:
+                if guard is not None:
+                    await guard.record(ctx, "".join(accumulator.parts))
+                raise
             finally:
                 ctx.record_stage("execute", started)
         except Exception as exc:
@@ -214,6 +255,12 @@ class Pipeline:
             raise
 
         await self._finalize_stream(ctx, accumulator.response())
+
+    def _stream_guard(self, ctx: RequestContext) -> Any | None:
+        """The post-stage that can filter a stream as it flows, if any."""
+        return next(
+            (post for post in self.post_stages if hasattr(post, "stream_redactor")), None
+        )
 
     async def _run_pre_stages(self, ctx: RequestContext) -> ChatResponse | None:
         for stage in self.pre_stages:
@@ -258,6 +305,11 @@ class Pipeline:
         response.fallback_used = ctx.fallback_used
         response.cache_hit = ctx.cache_hit
         response.cache_similarity = ctx.cache_similarity
+        if ctx.rag_sources:
+            response.sources = ctx.rag_sources
+        if ctx.stop_reason is not None:
+            response.stop_reason = ctx.stop_reason
+            response.tool_calls_executed = len(ctx.tool_executions)
         ctx.response = response
 
 
@@ -315,6 +367,35 @@ class _StreamAccumulator:
         if self.response_id:
             response.id = self.response_id
         return response
+
+
+def _filter_chunk(chunk: StreamChunk, redactor: Any) -> StreamChunk | None:
+    """Pass a chunk through the stream redactor; None when nothing is left to send.
+
+    Held-back text is flushed on the chunk that carries the finish reason, so
+    it always precedes the end of the message.
+    """
+    released = redactor.feed(chunk.content) if chunk.content else ""
+    if chunk.finish_reason is not None:
+        released += redactor.finish()
+    has_payload = (
+        chunk.role is not None
+        or chunk.tool_calls
+        or chunk.finish_reason is not None
+        or chunk.usage is not None
+    )
+    if not released and not has_payload:
+        return None
+    return chunk.model_copy(update={"content": released or None})
+
+
+async def _run_cleanups(ctx: RequestContext) -> None:
+    cleanups, ctx.cleanups = ctx.cleanups, []
+    for cleanup in cleanups:
+        try:
+            await cleanup()
+        except Exception:
+            logger.warning("request cleanup failed", exc_info=True)
 
 
 @runtime_checkable

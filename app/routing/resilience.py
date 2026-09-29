@@ -18,12 +18,14 @@ import dataclasses
 import random
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 from app.core.errors import (
     AllProvidersFailedError,
     ErrorCode,
     GatewayError,
     NoHealthyDeploymentError,
+    RateLimitExceededError,
 )
 from app.core.pipeline import RequestContext
 from app.core.schemas import ChatResponse, StreamChunk
@@ -73,12 +75,15 @@ class ResilientExecutor:
         breaker: CircuitBreaker,
         policy: RetryPolicy | None = None,
         max_fallbacks: int = 3,
+        redis: Any | None = None,
     ) -> None:
         self._registry = registry
         self._router = router
         self._breaker = breaker
         self._policy = policy or RetryPolicy()
         self._max_fallbacks = max_fallbacks
+        #: Enables per-deployment `rpm_limit` / `tpm_limit`; None disables them.
+        self._redis = redis
 
     # -- Non-streaming ----------------------------------------------------
 
@@ -92,6 +97,10 @@ class ResilientExecutor:
             if index > 0:
                 self._note_fallback(ctx, chain[index - 1], deployment, last_error)
 
+            limited = await self._admit(ctx, deployment)
+            if limited is not None:
+                last_error = limited
+                continue
             try:
                 return await self._attempt_deployment(ctx, deployment)
             except GatewayError as exc:
@@ -156,6 +165,10 @@ class ResilientExecutor:
             if index > 0:
                 self._note_fallback(ctx, chain[index - 1], deployment, last_error)
 
+            limited = await self._admit(ctx, deployment)
+            if limited is not None:
+                last_error = limited
+                continue
             provider = self._registry.provider_for(deployment)
             ctx.record_attempt(deployment.id)
             started = time.perf_counter()
@@ -212,9 +225,52 @@ class ResilientExecutor:
                 reason=f"fallback from {previous.id} after {reason}",
             )
 
+    async def _admit(
+        self, ctx: RequestContext, deployment: Deployment
+    ) -> RateLimitExceededError | None:
+        """Check the deployment's own rpm/tpm limits before calling it.
+
+        A saturated deployment is skipped exactly like a failing one, so traffic
+        spills over to the next deployment in the chain.
+        """
+        if self._redis is None or (deployment.rpm_limit is None and deployment.tpm_limit is None):
+            return None
+        from app.auth.ratelimit import SlidingWindowLimiter, TokenWindow
+        from app.auth.stage import deployment_tpm_counter
+
+        error: RateLimitExceededError | None = None
+        if deployment.tpm_limit is not None:
+            window = TokenWindow(self._redis)
+            if await window.usage(deployment_tpm_counter(deployment.id)) >= deployment.tpm_limit:
+                error = RateLimitExceededError(
+                    f"Deployment {deployment.id} token rate limit reached",
+                    retry_after=window.seconds_until_reset(),
+                )
+        if error is None and deployment.rpm_limit is not None:
+            allowed, _, retry_after = await SlidingWindowLimiter(self._redis).check_and_consume(
+                f"aigw:rl:dep:rpm:{deployment.id}", deployment.rpm_limit, 60
+            )
+            if not allowed:
+                error = RateLimitExceededError(
+                    f"Deployment {deployment.id} request rate limit reached",
+                    retry_after=retry_after,
+                )
+        if error is not None:
+            metrics.record_rate_limit("deployment")
+            ctx.errors.append(error)
+            if ctx.routing is not None:
+                ctx.routing.candidates_rejected[deployment.id] = "rate limited"
+        return error
+
     def _exhausted(
         self, ctx: RequestContext, last_error: GatewayError | None
     ) -> GatewayError:
+        if isinstance(last_error, RateLimitExceededError) and all(
+            isinstance(error, RateLimitExceededError) for error in ctx.errors
+        ):
+            # Every deployment was saturated: that is back-pressure the caller
+            # can act on, not a provider failure.
+            return last_error
         if last_error is None:
             return NoHealthyDeploymentError(
                 f"No deployment available for {ctx.request.model!r}"

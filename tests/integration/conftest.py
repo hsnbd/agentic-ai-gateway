@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
 import os
 import re
@@ -38,6 +39,7 @@ from app.core.schemas import (
     EmbeddingVector,
     Message,
     StreamChunk,
+    ToolCall,
     Usage,
 )
 from app.providers.base import Capabilities, Deployment, Pricing, Provider
@@ -98,6 +100,10 @@ class FakeProvider(Provider):
         self.stream_calls = 0
         self.embed_calls = 0
         self.seen_requests: list[ChatRequest] = []
+        #: Tool calls to make, one per model call, before answering normally.
+        self.tool_queue: list[tuple[str, dict[str, Any]]] = []
+        #: Stream in fixed-size character pieces instead of word by word.
+        self.chunk_size: int | None = None
 
     def capabilities(self, deployment: Deployment) -> Capabilities:
         return Capabilities(
@@ -122,17 +128,34 @@ class FakeProvider(Provider):
         if self.latency:
             await asyncio.sleep(self.latency)
         self._maybe_fail()
+        usage = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        if self.tool_queue:
+            name, arguments = self.tool_queue.pop(0)
+            call = ToolCall(name=name, arguments=json.dumps(arguments))
+            message = Message(role="assistant", content=None, tool_calls=[call])
+            return ChatResponse(
+                model=request.model,
+                provider=self.name,
+                choices=[Choice(index=0, message=message, finish_reason="tool_calls")],
+                usage=usage,
+            )
+        last = request.messages[-1] if request.messages else None
+        reply = f"Tool result: {last.text()}" if last and last.role == "tool" else self.reply
+        if "guardrail judge" in request.system_prompt() and last is not None:
+            # Deterministic LLM-judge verdicts: "__unsafe__" is a violation.
+            score = 1.0 if "__unsafe__" in last.text() else 0.0
+            reply = json.dumps({"score": score, "reason": "fake judge"})
         return ChatResponse(
             model=request.model,
             provider=self.name,
             choices=[
                 Choice(
                     index=0,
-                    message=Message(role="assistant", content=self.reply),
+                    message=Message(role="assistant", content=reply),
                     finish_reason="stop",
                 )
             ],
-            usage=Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+            usage=usage,
         )
 
     def stream(self, request: ChatRequest, deployment: Deployment) -> AsyncIterator[StreamChunk]:
@@ -143,8 +166,15 @@ class FakeProvider(Provider):
             if self.latency:
                 await asyncio.sleep(self.latency)
             self._maybe_fail()
-            for token in self.reply.split():
-                yield StreamChunk(model=request.model, provider=self.name, content=token + " ")
+            if self.chunk_size:
+                pieces = [
+                    self.reply[i : i + self.chunk_size]
+                    for i in range(0, len(self.reply), self.chunk_size)
+                ]
+            else:
+                pieces = [token + " " for token in self.reply.split()]
+            for piece in pieces:
+                yield StreamChunk(model=request.model, provider=self.name, content=piece)
             yield StreamChunk(
                 model=request.model,
                 provider=self.name,

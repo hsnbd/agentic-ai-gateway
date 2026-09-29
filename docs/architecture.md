@@ -22,18 +22,25 @@ HTTP request (OpenAI or Anthropic dialect)
       ▼
 ┌─────────────────────────────────────────────┐
 │ PRE-STAGES (any may short-circuit)          │
-│   1. auth        key, rate limit, budget    │
-│   2. guardrails  inspect the prompt         │
-│   3. cache       semantic lookup            │
+│   1. auth        key, limits, budget        │
+│   2. rag         retrieve context (aigw.rag)│
+│   3. guardrails  inspect prompt + context   │
+│   4. cache       semantic lookup            │
 └─────────────────────────────────────────────┘
       │
       ▼
 ┌─────────────────────────────────────────────┐
-│ RESILIENT EXECUTOR                          │
-│   router picks a deployment                 │
-│   retry on the same deployment              │
-│   fall back to the next on exhaustion       │
-│   circuit breaker tracks health             │
+│ AGENTIC EXECUTOR (aigw.mcp only)            │
+│   offer MCP tools, run the ones called,     │
+│   repeat until the model answers            │
+│ ┌─────────────────────────────────────────┐ │
+│ │ RESILIENT EXECUTOR (every model call)   │ │
+│ │   router picks a deployment             │ │
+│ │   skip deployments over rpm/tpm limits  │ │
+│ │   retry on the same deployment          │ │
+│ │   fall back to the next on exhaustion   │ │
+│ │   circuit breaker tracks health         │ │
+│ └─────────────────────────────────────────┘ │
 └─────────────────────────────────────────────┘
       │
       ▼
@@ -57,9 +64,19 @@ does to a request, read it top to bottom.
 **Auth first.** Unauthenticated work should cost nothing. Nothing that touches a
 provider, an embedding model, or the cache runs before the caller is known.
 
+**RAG after auth, before guardrails and cache.** Retrieval costs an embedding
+call, so it waits for a known caller. Running it before input guardrails means
+retrieved text is screened like the prompt (a poisoned document cannot smuggle
+instructions past policy), and running it before the cache means the cache keys
+on the grounded request, scoped to the collection.
+
 **Guardrails before cache.** A prompt that policy forbids should never even be
 looked up. Putting the cache first would mean a blocked prompt still performs a
 vector search.
+
+**The agent loop lives in the executor.** Tool hops re-enter routing, retries,
+and fallback, but not the pre- and post-stages: a request is authenticated,
+budget-checked, guarded, and logged once, with usage summed across every hop.
 
 **Observability last.** The request log must record the response the client
 actually received — after output guardrails have redacted it — along with the
@@ -142,6 +159,14 @@ Once bytes have reached the client the response is committed. Switching provider
 mid-stream would splice two different generations together, producing text no model
 ever wrote. After the first token, errors surface to the client instead. There is a
 test asserting the backup provider is never called in that case.
+
+### Output guardrails on streams
+
+Streamed text passes through a redactor that holds back the most recent
+`GUARDRAILS_STREAM_HOLDBACK_CHARS` characters and never releases part of a
+match, so redaction works across chunk boundaries. A `block` rule ends the
+stream with an in-band error. The output stage still sees the raw text once the
+stream completes, so violations are recorded exactly as for unary requests.
 
 ## Caching
 

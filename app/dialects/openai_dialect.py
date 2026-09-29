@@ -20,7 +20,7 @@ from app.core.schemas import (
     ToolChoice,
     ToolDef,
 )
-from app.dialects.base import Dialect
+from app.dialects.base import Dialect, extract_gateway_fields
 
 
 def _sse(data: dict[str, Any]) -> str:
@@ -50,20 +50,7 @@ class OpenAIDialect(Dialect):
                 raise InvalidRequestError("Unsupported tool_choice value")
         except (ValidationError, KeyError, TypeError) as exc:
             raise InvalidRequestError(f"Invalid tool_choice: {exc}") from exc
-        extensions: dict[str, Any] = {}
-        for key in ("metadata", "aigw"):
-            value = payload.get(key)
-            if isinstance(value, dict):
-                extensions.update(value)
-        fields = (
-            "no_cache",
-            "cache_ttl",
-            "fallbacks",
-            "routing_strategy",
-            "guardrail_policy",
-            "tags",
-        )
-        extensions.update({key: payload[key] for key in fields if key in payload})
+        extensions = extract_gateway_fields(payload)
         stop = payload.get("stop")
         if isinstance(stop, str):
             stop = [stop]
@@ -88,7 +75,7 @@ class OpenAIDialect(Dialect):
                     "response_format": payload.get("response_format"),
                     "parallel_tool_calls": payload.get("parallel_tool_calls"),
                     "metadata": payload.get("metadata") or {},
-                    **{key: extensions[key] for key in fields if key in extensions},
+                    **extensions,
                 }
             )
         except (ValidationError, KeyError, TypeError, ValueError) as exc:
@@ -206,6 +193,15 @@ class OpenAIDialect(Dialect):
                 "cache_hit": response.cache_hit,
                 "latency_ms": response.latency_ms,
                 "cost_usd": response.cost_usd,
+                **({"sources": response.sources} if response.sources else {}),
+                **(
+                    {
+                        "stop_reason": response.stop_reason,
+                        "tool_calls_executed": response.tool_calls_executed,
+                    }
+                    if response.stop_reason
+                    else {}
+                ),
             },
         }
 

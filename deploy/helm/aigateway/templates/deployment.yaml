@@ -17,28 +17,23 @@ spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.migrations.enabled }}
+      # Apply Alembic migrations before any gateway container starts. With
+      # several replicas the init containers race harmlessly: Alembic takes a
+      # lock on its version table, and later runs find nothing to do.
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "app.cli", "migrate"]
+          env: {{- include "aigateway.env" . | nindent 12 }}
+      {{- end }}
       containers:
         - name: gateway
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports: [{name: http, containerPort: 8000, protocol: TCP}]
-          env:
-            {{- range $key, $value := .Values.env }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
-            {{- range $key, $_ := .Values.secretEnv }}
-            - name: {{ $key }}
-              valueFrom: {secretKeyRef: {name: {{ include "aigateway.fullname" $ }}-secrets, key: {{ $key }}}}
-            {{- end }}
-            {{- if .Values.external.postgres.url }}
-            - name: DATABASE_URL
-              value: {{ .Values.external.postgres.url | quote }}
-            {{- end }}
-            {{- if .Values.external.redis.url }}
-            - name: REDIS_URL
-              value: {{ .Values.external.redis.url | quote }}
-            {{- end }}
+          env: {{- include "aigateway.env" . | nindent 12 }}
           volumeMounts: [{name: config, mountPath: /app/config, readOnly: true}]
           resources: {{- toYaml .Values.resources | nindent 12 }}
           startupProbe:

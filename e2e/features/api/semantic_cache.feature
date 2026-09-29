@@ -22,3 +22,10 @@ Feature: Semantic cache
     When I send a deterministic chat request saying "Opt out please <unique>"
     And I send a deterministic chat request saying "Opt out please <same>" with caching disabled
     Then the response header "X-Gateway-Cache" is "miss"
+
+  Scenario: A cache hit reports its similarity and the time it saved
+    When I send a deterministic chat request saying "How tall is Everest? <unique>"
+    And I send a deterministic chat request saying "How tall is Everest? <same>"
+    Then the response header "X-Gateway-Cache" is "hit"
+    And the response header "X-Gateway-Cache-Similarity" is "1.0000"
+    And the admin cache stats report the latency saved

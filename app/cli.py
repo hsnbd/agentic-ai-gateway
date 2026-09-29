@@ -122,6 +122,22 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_migrate(args: argparse.Namespace) -> int:
+    from app.db import migrate
+
+    migrate.upgrade(args.revision)
+    print(f"Database migrated to {args.revision}.")
+    return 0
+
+
+def _cmd_db_stamp(args: argparse.Namespace) -> int:
+    from app.db import migrate
+
+    migrate.stamp(args.revision)
+    print(f"Database stamped at {args.revision} (no migrations were run).")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aigateway", description="Agentic AI Gateway")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -132,8 +148,21 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--reload", action="store_true")
     serve.set_defaults(func=_cmd_serve, is_async=False)
 
-    init_db = sub.add_parser("init-db", help="Create database tables")
+    init_db = sub.add_parser(
+        "init-db", help="Create missing tables directly (development; prefer `migrate`)"
+    )
     init_db.set_defaults(func=_cmd_init_db, is_async=True)
+
+    migrate = sub.add_parser("migrate", help="Apply database migrations (Alembic)")
+    migrate.add_argument("--revision", default="head")
+    migrate.set_defaults(func=_cmd_migrate, is_async=False)
+
+    db_stamp = sub.add_parser(
+        "db-stamp",
+        help="Mark an existing schema (e.g. made by AUTO_CREATE_SCHEMA) as migrated",
+    )
+    db_stamp.add_argument("--revision", default="head")
+    db_stamp.set_defaults(func=_cmd_db_stamp, is_async=False)
 
     create_admin = sub.add_parser("create-admin", help="Create a console account")
     create_admin.add_argument("--email", required=True)

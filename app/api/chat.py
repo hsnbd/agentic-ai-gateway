@@ -17,6 +17,7 @@ from app.core.errors import (
     GatewayError,
     InvalidRequestError,
     NotFoundError,
+    retry_after_header,
 )
 from app.core.pipeline import Pipeline, RequestContext
 from app.core.schemas import ChatRequest, EmbeddingRequest, Message, Role
@@ -76,6 +77,10 @@ def _headers(ctx: RequestContext) -> dict[str, str]:
         result["X-Gateway-Provider"] = provider
     if deployment_id:
         result["X-Gateway-Deployment"] = deployment_id
+    if ctx.cache_hit and ctx.cache_similarity is not None:
+        result["X-Gateway-Cache-Similarity"] = f"{ctx.cache_similarity:.4f}"
+    if ctx.request.rag is not None:
+        result["X-Gateway-RAG-Sources"] = str(len(ctx.rag_sources))
     return result
 
 
@@ -84,7 +89,7 @@ def _error(
 ) -> JSONResponse:
     headers = _headers(ctx) if ctx else {}
     if error.retry_after is not None:
-        headers["Retry-After"] = str(int(error.retry_after))
+        headers["Retry-After"] = retry_after_header(error.retry_after)
     return JSONResponse(dialect.encode_error(error), status_code=error.status_code, headers=headers)
 
 

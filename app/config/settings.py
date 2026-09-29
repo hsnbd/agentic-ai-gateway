@@ -74,6 +74,9 @@ class Settings(BaseSettings):
 
     # --- Guardrails ---
     guardrails_enabled: bool = True
+    #: Characters held back while streaming so output redaction can see a
+    #: match whole before any of it is sent. Longer secrets may leak partly.
+    guardrails_stream_holdback_chars: int = Field(default=128, ge=0)
 
     # --- Semantic cache ---
     cache_enabled: bool = True
@@ -90,7 +93,6 @@ class Settings(BaseSettings):
     rag_chunk_size: int = 1000
     rag_chunk_overlap: int = 150
     rag_default_top_k: int = 5
-    rag_index_name: str = "aigw:rag:idx"
 
     # --- MCP ---
     mcp_timeout_seconds: float = 10.0

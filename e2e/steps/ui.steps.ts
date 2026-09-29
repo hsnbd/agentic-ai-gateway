@@ -85,12 +85,26 @@ Then('I see the {string} page', async function (this: GatewayWorld, title: strin
   await heading(this.currentPage, title).waitFor();
 });
 
+/**
+ * Assert a condition stays true for a while. `networkidle` is not usable here:
+ * console pages poll their data, so the network may never go quiet.
+ */
+async function holdsFor(ms: number, check: () => Promise<string | null>): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    const problem = await check();
+    if (problem) assert.fail(problem);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 Then('the page shows no error', async function (this: GatewayWorld) {
   const page = this.currentPage;
-  // Let lazy data settle, then make sure no error boundary or error state rendered.
-  await page.waitForLoadState('networkidle');
-  assert.equal(await page.getByText('Something went wrong').count(), 0, 'error boundary rendered');
-  assert.equal(await page.getByRole('alert').filter({ hasText: /error|failed/i }).count(), 0);
+  await holdsFor(1500, async () => {
+    if (await page.getByText('Something went wrong').count()) return 'error boundary rendered';
+    if (await page.getByRole('alert').filter({ hasText: /error|failed/i }).count()) return 'error alert shown';
+    return null;
+  });
 });
 
 function navLinks(page: Page): Locator {
@@ -113,8 +127,8 @@ Then('the navigation does not show {string}', async function (this: GatewayWorld
 });
 
 Then('there is no {string} button', async function (this: GatewayWorld, name: string) {
-  await this.currentPage.waitForLoadState('networkidle');
-  assert.equal(await this.currentPage.getByRole('button', { name }).count(), 0);
+  const button = this.currentPage.getByRole('button', { name });
+  await holdsFor(1500, async () => ((await button.count()) ? `"${name}" button is shown` : null));
 });
 
 Then('I see a notification containing {string}', async function (this: GatewayWorld, text: string) {
@@ -125,8 +139,10 @@ Then('I see a notification containing {string}', async function (this: GatewayWo
 
 When('I create a virtual key named {string}', async function (this: GatewayWorld, name: string) {
   const page = this.currentPage;
+  await heading(page, 'Virtual keys').waitFor();
   await page.getByRole('button', { name: 'Create key' }).click();
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('dialog', { name: 'Create virtual key' });
+  await dialog.waitFor();
   await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill(this.expand(name));
   await dialog.getByRole('button', { name: 'Create', exact: true }).click();
 });

@@ -7,6 +7,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Keys = lazy(() => import('./pages/Keys'));
+const Teams = lazy(() => import('./pages/Teams'));
 const Models = lazy(() => import('./pages/Models'));
 const Logs = lazy(() => import('./pages/Logs'));
 const Usage = lazy(() => import('./pages/Usage'));
@@ -29,6 +30,7 @@ export default function AppRoutes() {
 
         {/* Readable by viewers. Each page hides its own mutating controls by
             role, and the backend enforces the same rules independently. */}
+        <Route path="teams" element={<Teams />} />
         <Route path="models" element={<Models />} />
         <Route path="logs" element={<Logs />} />
         <Route path="usage" element={<Usage />} />

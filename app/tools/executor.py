@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from app.core.errors import InvalidRequestError
 from app.core.pipeline import RequestContext
-from app.core.schemas import ChatResponse, FinishReason, Message, Role, ToolCall
+from app.core.schemas import ChatResponse, FinishReason, Message, Role, ToolCall, Usage
 from app.mcp.registry import McpRegistry
 from app.mcp.translate import tool_result_to_message
 from app.tools.validation import validate_arguments
@@ -19,33 +20,47 @@ class ToolExecutor:
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
     async def execute(self, tool_call: ToolCall) -> Message:
+        message, _ = await self.execute_detailed(tool_call)
+        return message
+
+    async def execute_detailed(self, tool_call: ToolCall) -> tuple[Message, bool]:
+        """Run one call; returns the tool message and whether it is an error."""
         tool_defs = await self.mcp_registry.tools_for()
         tool = next((item for item in tool_defs if item.function.name == tool_call.name), None)
         if tool is None:
-            return _tool_error(tool_call.id, f"Tool {tool_call.name!r} is unavailable")
+            return _tool_error(tool_call.id, f"Tool {tool_call.name!r} is unavailable"), True
         arguments = validate_arguments(tool, tool_call.arguments)
         if _is_validation_error(arguments):
-            return _tool_error(tool_call.id, json.dumps(arguments, ensure_ascii=False))
+            return _tool_error(tool_call.id, json.dumps(arguments, ensure_ascii=False)), True
         try:
             server_id, original_name = self.mcp_registry.resolve(tool_call.name)
             async with self._semaphore:
                 result = await self.mcp_registry.call_tool(server_id, original_name, arguments)
-            return tool_result_to_message(tool_call.id, result)
+            return tool_result_to_message(tool_call.id, result), bool(result.get("isError"))
         except Exception as exc:
-            return _tool_error(tool_call.id, f"Tool execution failed: {exc}")
+            return _tool_error(tool_call.id, f"Tool execution failed: {exc}"), True
 
     async def execute_all(self, tool_calls: Sequence[ToolCall]) -> list[Message]:
-        results = await asyncio.gather(
-            *(self.execute(tool_call) for tool_call in tool_calls),
-            return_exceptions=True,
-        )
-        messages: list[Message] = []
-        for tool_call, result in zip(tool_calls, results, strict=True):
-            if isinstance(result, BaseException):
-                messages.append(_tool_error(tool_call.id, f"Tool execution failed: {result}"))
-            else:
-                messages.append(result)
-        return messages
+        return [message for message, _ in await self.execute_all_detailed(tool_calls)]
+
+    async def execute_all_detailed(
+        self, tool_calls: Sequence[ToolCall]
+    ) -> list[tuple[Message, dict[str, Any]]]:
+        """Run calls concurrently; each result carries an audit record."""
+
+        async def timed(call: ToolCall) -> tuple[Message, dict[str, Any]]:
+            started = time.perf_counter()
+            try:
+                message, is_error = await self.execute_detailed(call)
+            except BaseException as exc:  # isolate one call's failure from the rest
+                message, is_error = _tool_error(call.id, f"Tool execution failed: {exc}"), True
+            return message, {
+                "name": call.name,
+                "ms": round((time.perf_counter() - started) * 1000, 3),
+                "is_error": is_error,
+            }
+
+        return list(await asyncio.gather(*(timed(call) for call in tool_calls)))
 
 
 async def run_agentic_loop(
@@ -54,34 +69,67 @@ async def run_agentic_loop(
     *,
     max_iterations: int = 10,
 ) -> ChatResponse:
-    """Run bounded model/tool hops.
+    """Run bounded model/tool hops, executing every tool call through MCP.
 
-    Messages and tool output are appended without compaction, so context can grow
-    with each iteration; callers should choose a cap appropriate to model limits.
+    The gateway's own agent mode uses `app.tools.agent.AgenticExecutor`, which
+    calls `run_tool_loop` inside the pipeline so pre- and post-stages run once.
+    """
+    executor = ToolExecutor(ctx.state.components["mcp_registry"])
+    response = await run_tool_loop(ctx, pipeline_run, executor, max_iterations=max_iterations)
+    response.stop_reason = ctx.stop_reason
+    return response
+
+
+async def run_tool_loop(
+    ctx: RequestContext,
+    call_model: Callable[[RequestContext], Awaitable[ChatResponse]],
+    executor: ToolExecutor,
+    *,
+    max_iterations: int,
+    mcp_names: set[str] | None = None,
+) -> ChatResponse:
+    """Alternate model calls and tool execution until the model stops asking.
+
+    Ends with `ctx.stop_reason` set to "completed", "max_iterations", or
+    "client_tool_call" (a call the gateway cannot run, which is returned to the
+    caller unexecuted). `mcp_names` limits which calls the gateway may execute;
+    None means every call goes to MCP. Usage is summed across hops so the
+    request is costed and budgeted for all of them.
+
+    Messages and tool output are appended without compaction, so context grows
+    with each hop; callers should choose a cap appropriate to model limits.
     """
     if max_iterations < 1:
         raise InvalidRequestError("max_iterations must be at least 1")
-    executor = ToolExecutor(ctx.state.components["mcp_registry"])
     seen_calls: set[tuple[str, str]] = set()
+    total = Usage()
+    response: ChatResponse | None = None
 
     for iteration in range(max_iterations):
-        response = await pipeline_run(ctx)
+        response = await call_model(ctx)
+        total = total + response.usage
         choice = response.choices[0] if response.choices else None
         if choice is None or choice.finish_reason != FinishReason.TOOL_CALLS:
-            object.__setattr__(response, "stop_reason", "completed")
-            return response
+            ctx.stop_reason = "completed"
+            break
+        calls = choice.message.tool_calls
+        if mcp_names is not None and any(call.name not in mcp_names for call in calls):
+            ctx.stop_reason = "client_tool_call"
+            break
         if iteration == max_iterations - 1:
-            object.__setattr__(response, "stop_reason", "max_iterations")
-            return response
+            ctx.stop_reason = "max_iterations"
+            break
 
         ctx.request.messages.append(choice.message)
         repeated: list[ToolCall] = []
-        for call in choice.message.tool_calls:
+        for call in calls:
             signature = (call.name, _normalized_arguments(call.arguments))
             if signature in seen_calls:
                 repeated.append(call)
             seen_calls.add(signature)
-        ctx.request.messages.extend(await executor.execute_all(choice.message.tool_calls))
+        for message, record in await executor.execute_all_detailed(calls):
+            ctx.request.messages.append(message)
+            ctx.tool_executions.append({**record, "iteration": iteration + 1})
         if repeated:
             names = ", ".join(sorted({call.name for call in repeated}))
             ctx.request.messages.append(
@@ -94,7 +142,8 @@ async def run_agentic_loop(
                 )
             )
 
-    object.__setattr__(response, "stop_reason", "max_iterations")
+    assert response is not None  # max_iterations >= 1
+    response.usage = total
     return response
 
 

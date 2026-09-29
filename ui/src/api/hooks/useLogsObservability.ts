@@ -16,7 +16,7 @@ export interface LogFilters {
   search?: string;
 }
 
-function paramsFromFilters(filters: LogFilters): URLSearchParams {
+export function paramsFromFilters(filters: LogFilters): URLSearchParams {
   const params = new URLSearchParams({ limit: String(filters.limit), offset: String(filters.offset) });
   for (const key of ['start', 'end', 'virtual_key_id', 'model', 'provider', 'status', 'search'] as const) {
     const value = filters[key];
@@ -25,6 +25,13 @@ function paramsFromFilters(filters: LogFilters): URLSearchParams {
   if (filters.cache_hit !== undefined) params.set('cache_hit', String(filters.cache_hit));
   if (filters.min_latency_ms !== undefined) params.set('min_latency_ms', String(filters.min_latency_ms));
   return params;
+}
+
+/** The CSV export URL for the same filters (paging does not apply). */
+export function logsExportPath(filters: LogFilters): string {
+  const params = paramsFromFilters(filters);
+  params.delete('limit'); params.delete('offset');
+  return `/admin/api/logs/export?${params.toString()}`;
 }
 
 export function useFilteredLogs(filters: LogFilters) {

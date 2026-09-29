@@ -111,6 +111,27 @@ class Message(BaseModel):
 # --------------------------------------------------------------------------
 
 
+class RagOptions(BaseModel):
+    """Ground a chat request in a gateway RAG collection (`aigw.rag`)."""
+
+    collection_id: str = Field(min_length=1)
+    query: str | None = None
+    top_k: int = Field(default=5, gt=0, le=100)
+    min_score: float = Field(default=0.0, ge=-1.0, le=1.0)
+    diversity: float = Field(default=0.0, ge=0.0, le=1.0)
+    filters: dict[str, str] | None = None
+    max_context_tokens: int = Field(default=4000, gt=0)
+    mode: Literal["system", "user"] = "system"
+
+
+class McpOptions(BaseModel):
+    """Let the gateway run MCP tools server-side for this request (`aigw.mcp`)."""
+
+    #: Server ids to expose; None exposes every healthy server.
+    servers: list[str] | None = None
+    max_iterations: int = Field(default=8, ge=1, le=50)
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -142,6 +163,8 @@ class ChatRequest(BaseModel):
     routing_strategy: str | None = None
     guardrail_policy: str | None = None
     tags: list[str] = Field(default_factory=list)
+    rag: RagOptions | None = None
+    mcp: McpOptions | None = None
 
     def system_prompt(self) -> str:
         """Concatenate all system messages, which some providers need hoisted out."""
@@ -222,6 +245,12 @@ class ChatResponse(BaseModel):
     cost_usd: float | None = None
     attempt_count: int = 1
     fallback_used: bool = False
+    #: Retrieved chunks that grounded the answer (`aigw.rag`).
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    #: Why a server-side agent loop ended: "completed" or "max_iterations".
+    stop_reason: str | None = None
+    #: MCP tool calls the gateway executed on the caller's behalf.
+    tool_calls_executed: int = 0
 
     @property
     def text(self) -> str:

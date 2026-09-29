@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import health
 from app.config.settings import Settings, get_settings
-from app.core.errors import GatewayError
+from app.core.errors import GatewayError, retry_after_header
 from app.core.state import GatewayState
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
     async def gateway_error_handler(_: Request, exc: GatewayError) -> JSONResponse:
         headers: dict[str, str] = {}
         if exc.retry_after is not None:
-            headers["Retry-After"] = str(int(exc.retry_after))
+            headers["Retry-After"] = retry_after_header(exc.retry_after)
         return JSONResponse(
             status_code=exc.status_code, content=exc.to_dict(), headers=headers
         )

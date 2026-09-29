@@ -61,8 +61,8 @@ down: ## Stop the local stack
 logs: ## Tail the local stack logs
 	docker compose -f deploy/docker/compose.yaml logs -f
 
-migrate: ## Apply database migrations
-	uv run alembic upgrade head
+migrate: ## Apply database migrations (Alembic)
+	uv run aigateway migrate
 
 e2e-install: ## Install the Cucumber/Playwright E2E suite and its browser
 	cd e2e && npm ci && npx playwright install --with-deps chromium

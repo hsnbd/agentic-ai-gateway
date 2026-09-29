@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -46,6 +46,8 @@ class ResolvedKey:
     max_budget_usd: Decimal | None
     spend_usd: Decimal
     guardrail_policy: str | None
+    max_parallel_requests: int | None = None
+    allowed_routes: list[str] = field(default_factory=list)
 
     def is_valid(self, now: datetime | None = None) -> bool:
         now = now or datetime.now(UTC)
@@ -58,6 +60,12 @@ class ResolvedKey:
         if model in self.blocked_models:
             return False
         return not self.allowed_models or model in self.allowed_models
+
+    def permits_route(self, route: str) -> bool:
+        """Routes are allowed by path prefix, e.g. "/v1/chat" or "/v1/embeddings"."""
+        return not self.allowed_routes or any(
+            route.startswith(prefix) for prefix in self.allowed_routes
+        )
 
 
 def _resolved_from_row(row: VirtualKey) -> ResolvedKey:
@@ -73,6 +81,8 @@ def _resolved_from_row(row: VirtualKey) -> ResolvedKey:
         max_budget_usd=Decimal(str(row.max_budget_usd)) if row.max_budget_usd is not None else None,
         spend_usd=Decimal(str(row.spend_usd or 0)),
         guardrail_policy=row.guardrail_policy,
+        max_parallel_requests=row.max_parallel_requests,
+        allowed_routes=list(row.allowed_routes or []),
     )
 
 
@@ -89,6 +99,8 @@ def _serialize_key(key: ResolvedKey) -> str:
         "max_budget_usd": str(key.max_budget_usd) if key.max_budget_usd is not None else None,
         "spend_usd": str(key.spend_usd),
         "guardrail_policy": key.guardrail_policy,
+        "max_parallel_requests": key.max_parallel_requests,
+        "allowed_routes": key.allowed_routes,
     }
     return json.dumps(data, separators=(",", ":"))
 
@@ -113,6 +125,9 @@ def _deserialize_key(snapshot: str | bytes) -> ResolvedKey:
         max_budget_usd=Decimal(budget) if budget is not None else None,
         spend_usd=Decimal(data["spend_usd"]),
         guardrail_policy=data["guardrail_policy"],
+        # .get: snapshots cached before these fields existed stay readable.
+        max_parallel_requests=data.get("max_parallel_requests"),
+        allowed_routes=data.get("allowed_routes") or [],
     )
 
 

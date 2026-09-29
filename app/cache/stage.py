@@ -54,5 +54,8 @@ class CacheWriteStage:
                     response.usage,
                     deployment,
                 )
+            if response.latency_ms is None:
+                # Stored so a later hit can report how much time it saved.
+                response.latency_ms = ctx.elapsed_ms()
             await self.cache.store(ctx, response)
         return response

@@ -9,6 +9,7 @@ from app.core.schemas import ChatResponse, ContentPart, Role, TextPart
 from app.db.models import GuardrailViolation
 from app.guardrails.base import Action, GuardrailResult, Phase
 from app.guardrails.registry import GuardrailRegistry
+from app.guardrails.stream import StreamRedactor
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +56,24 @@ class InputGuardrailStage:
 class OutputGuardrailStage:
     name = "guardrails_output"
 
-    def __init__(self, registry: GuardrailRegistry) -> None:
+    def __init__(self, registry: GuardrailRegistry, stream_holdback: int = 128) -> None:
         self.registry = registry
+        self.stream_holdback = stream_holdback
+
+    def stream_redactor(self, ctx: RequestContext) -> StreamRedactor | None:
+        """A filter that applies this policy to text while it streams."""
+        redactor = StreamRedactor(
+            self.registry, ctx.request.guardrail_policy or "default", self.stream_holdback
+        )
+        return redactor if redactor.active else None
+
+    async def record(self, ctx: RequestContext, text: str) -> None:
+        """Evaluate and persist violations without acting on them (stream already cut)."""
+        policy = ctx.request.guardrail_policy or "default"
+        result = await self.registry.evaluate(policy, text, Phase.OUTPUT)
+        _record_result(ctx, "output", result)
+        ctx.guardrail_flagged = ctx.guardrail_flagged or result.flagged
+        await _persist_violations(ctx, result)
 
     async def finalize(self, ctx: RequestContext, response: ChatResponse) -> ChatResponse:
         policy = ctx.request.guardrail_policy or "default"

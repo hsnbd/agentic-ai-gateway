@@ -112,8 +112,8 @@ curl -N http://localhost:4000/v1/chat/completions \
 
 ## Gateway-specific request fields
 
-Any OpenAI-dialect request may carry extra fields the gateway consumes and strips
-before calling a provider:
+Any request, in either dialect, may carry extra fields the gateway consumes and
+strips before calling a provider, at the top level or nested under `aigw`:
 
 ```json
 {
@@ -128,14 +128,57 @@ before calling a provider:
 }
 ```
 
-Most SDKs allow extra body fields (`extra_body` in the OpenAI Python client).
+Most SDKs allow extra body fields (`extra_body` in the OpenAI Python client). SDKs
+that reject unknown top-level fields can nest them: `{"aigw": {"no_cache": true}}`.
+
+## Server-side RAG and tools
+
+Two fields turn an ordinary chat request into an agentic one, with no change to
+the client beyond an extra body field.
+
+**`rag`** retrieves from a gateway RAG collection and adds the context to the
+prompt before the model sees it. Retrieved text passes through input
+guardrails, and the answer's sources come back with it:
+
+```python
+completion = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "What is our refund policy?"}],
+    extra_body={"aigw": {"rag": {"collection_id": "<id>", "top_k": 4}}},
+)
+completion.aigw["sources"]   # [{"id", "text", "score", "source", ...}]
+```
+
+**`mcp`** offers the tools of registered MCP servers to the model and runs any
+it calls, feeding results back until the model answers:
+
+```python
+completion = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "What is 2 + 3?"}],
+    extra_body={"aigw": {"mcp": {"servers": ["<server id>"], "max_iterations": 8}}},
+)
+completion.aigw["stop_reason"]          # "completed" | "max_iterations" | "client_tool_call"
+completion.aigw["tool_calls_executed"]  # MCP calls the gateway ran
+```
+
+- Tools the client sends itself are offered too; if the model calls one, the
+  gateway stops and returns that call to the client unexecuted
+  (`stop_reason: "client_tool_call"`).
+- Auth, budgets, guardrails, and the request log apply once per request; usage
+  and cost are summed across every model hop.
+- A streamed request is answered by running the loop, then streaming the final
+  answer.
+- Omit `servers` to offer every healthy server's tools.
 
 ## Response headers
 
 | Header | Meaning |
 |---|---|
 | `X-Gateway-Cache` | `hit` or `miss` |
-| `X-Gateway-Cache-Similarity` | Cosine similarity of the matched entry |
+| `X-Gateway-Cache-Similarity` | Cosine similarity of the matched entry (hits only) |
+| `X-Gateway-RAG-Sources` | Chunks retrieved for `rag` requests |
+| `X-Gateway-Cost-USD` | Cost charged for this request (0 on a cache hit) |
 | `X-Gateway-Provider` | Provider that actually served the request |
 | `X-Gateway-Deployment` | Deployment id |
 | `X-Gateway-Request-Id` | Correlates with the request log and traces |

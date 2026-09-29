@@ -54,6 +54,15 @@ class McpRegistry:
         self._refresh_lock = asyncio.Lock()
         self._cache_ttl = float(getattr(settings, "mcp_tool_cache_ttl_seconds", 300))
 
+    async def close(self) -> None:
+        """Close every client, terminating stdio server processes."""
+        clients, self._clients = list(self._clients.values()), {}
+        for client in clients:
+            try:
+                await client.aclose()
+            except Exception:
+                logger.warning("MCP client did not close cleanly", exc_info=True)
+
     async def refresh(self, server_id: str | None = None) -> dict[str, bool]:
         async with self._refresh_lock:
             await self._load_records(force=True)

@@ -290,8 +290,84 @@ def test_unknown_rule_type_is_configuration_error(tmp_path: Any) -> None:
     path = tmp_path / "guardrails.yaml"
     path.write_text(
         "policies:\n  default:\n    input:\n"
+        "      - name: bad\n        type: magic\n    output: []\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigurationError, match="Unknown guardrail rule type"):
+        GuardrailRegistry.load(path)
+
+
+def test_incomplete_llm_judge_rule_is_configuration_error(tmp_path: Any) -> None:
+    path = tmp_path / "guardrails.yaml"
+    path.write_text(
+        "policies:\n  default:\n    input:\n"
         "      - name: bad\n        type: llm_judge\n    output: []\n",
         encoding="utf-8",
     )
-    with pytest.raises(ConfigurationError, match="LLM-judge guardrails are not enabled"):
+    with pytest.raises(ConfigurationError, match="Invalid configuration"):
         GuardrailRegistry.load(path)
+
+
+JUDGE_POLICY = (
+    "policies:\n  default:\n    input:\n"
+    "      - name: judge\n        type: llm_judge\n        model: judge-model\n"
+    "        prompt: No medical advice\n        threshold: 0.7\n        action: block\n"
+    "{extra}"
+    "    output: []\n"
+)
+
+
+def _judge_registry(tmp_path: Any, reply: str | Exception, extra: str = "") -> GuardrailRegistry:
+    path = tmp_path / "guardrails.yaml"
+    path.write_text(JUDGE_POLICY.format(extra=extra), encoding="utf-8")
+    registry = GuardrailRegistry.load(path)
+    calls: list[tuple[str, str, str]] = []
+
+    async def judge(model: str, instructions: str, text: str) -> str:
+        calls.append((model, instructions, text))
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    registry.set_judge(judge)
+    registry.judge_calls = calls  # type: ignore[attr-defined]
+    return registry
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "blocked"),
+    [
+        ('{"score": 0.9, "reason": "dosage advice"}', True),
+        ('Sure! {"score": 0.7, "reason": "borderline"} Hope that helps.', True),
+        ('{"score": 0.2, "reason": "fine"}', False),
+    ],
+)
+async def test_llm_judge_scores_against_threshold(
+    tmp_path: Any, reply: str, blocked: bool
+) -> None:
+    registry = _judge_registry(tmp_path, reply)
+    result = await registry.evaluate("default", "How much ibuprofen?", Phase.INPUT)
+    assert result.blocked is blocked
+    model, instructions, text = registry.judge_calls[0]  # type: ignore[attr-defined]
+    assert model == "judge-model"
+    assert "No medical advice" in instructions
+    assert text == "How much ibuprofen?"
+    if blocked:
+        assert result.matches[0].details["reason"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", ["not json at all", '{"score": 7}', RuntimeError("down")])
+async def test_llm_judge_fails_open_by_default(tmp_path: Any, reply: Any) -> None:
+    registry = _judge_registry(tmp_path, reply)
+    result = await registry.evaluate("default", "text", Phase.INPUT)
+    assert result.blocked is False
+
+
+@pytest.mark.asyncio
+async def test_llm_judge_can_fail_closed(tmp_path: Any) -> None:
+    registry = _judge_registry(tmp_path, RuntimeError("down"), extra="        on_error: block\n")
+    result = await registry.evaluate("default", "text", Phase.INPUT)
+    assert result.blocked is True
+    assert "judge unavailable" in result.matches[0].details["reason"]

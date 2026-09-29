@@ -1,7 +1,7 @@
 export interface Page<T> { items: T[]; total: number; limit: number; offset: number }
 export interface ProviderStatus { provider: string; configured: boolean; reachable: boolean; health_state: string }
 export interface AdminUser { id: string; email: string; full_name: string | null; role: 'admin' | 'viewer'; is_active: boolean; created_at: string }
-export interface LoginResponse { access_token: string; token_type: 'bearer'; expires_in: number; user: AdminUser }
+export interface LoginResponse { access_token: string; token_type: 'bearer'; expires_in: number; user: AdminUser; refresh_token?: string | null; refresh_expires_in?: number | null }
 export interface DashboardSummary {
   requests: number; success_rate: number; p50_latency_ms: number; p95_latency_ms: number;
   p99_latency_ms: number; total_cost_usd: number; total_tokens: number;

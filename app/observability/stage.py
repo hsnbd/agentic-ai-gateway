@@ -48,6 +48,8 @@ class ObservabilityStage:
         try:
             await service.record(ctx, response)
             await _charge_spend(ctx, response.cost_usd or 0.0)
+            if not ctx.cache_hit:
+                await _count_tokens(ctx, response.usage.total_tokens)
             duration = response.latency_ms or ctx.elapsed_ms()
             if getattr(ctx.state.settings, "metrics_enabled", True):
                 metrics.record_request(
@@ -119,6 +121,22 @@ class ObservabilityStage:
             latency_ms=ctx.elapsed_ms(),
             attempt_count=max(ctx.attempt_count, 1),
         )
+
+
+async def _count_tokens(ctx: RequestContext, tokens: int) -> None:
+    """Feed actual usage into the key and deployment tokens-per-minute windows."""
+    from app.auth.ratelimit import TokenWindow
+    from app.auth.stage import deployment_tpm_counter, key_tpm_counter
+
+    if ctx.state.redis is None or tokens <= 0:
+        return
+    window = TokenWindow(ctx.state.redis)
+    key = ctx.virtual_key
+    if key is not None and getattr(key, "tpm_limit", None) is not None:
+        await window.add(key_tpm_counter(key.id), tokens)
+    deployment = ctx.routing.deployment if ctx.routing is not None else None
+    if deployment is not None and deployment.tpm_limit is not None:
+        await window.add(deployment_tpm_counter(deployment.id), tokens)
 
 
 async def _charge_spend(ctx: RequestContext, cost_usd: float) -> None:

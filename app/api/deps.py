@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.auth.console import decode_token
 from app.auth.keys import KeyService
+from app.auth.sessions import TokenRevocation
 from app.core.errors import GatewayError
 from app.core.state import GatewayState
 from app.db.models import AdminUser
@@ -26,6 +27,19 @@ def get_gateway_state(request: Request) -> GatewayState:
 
 
 _bearer = HTTPBearer(auto_error=False)
+#: The raw `Authorization: Bearer` credentials, when a route needs the token itself.
+BearerCredentials = Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)]
+
+
+def token_revocation(state: GatewayState) -> TokenRevocation:
+    return TokenRevocation(
+        state.redis, user_ttl_seconds=state.settings.jwt_refresh_ttl_seconds
+    )
+
+
+async def _require_live(state: GatewayState, claims: dict[str, Any]) -> None:
+    if await token_revocation(state).is_revoked(claims):
+        raise HTTPException(status_code=401, detail="Console session has been signed out")
 
 
 async def get_current_admin(
@@ -42,6 +56,7 @@ async def get_current_admin(
     user_id = claims.get("sub")
     if not isinstance(user_id, str):
         raise HTTPException(status_code=401, detail="Console token is missing its subject")
+    await _require_live(state, claims)
     async with state.db.session() as session:
         user = await session.scalar(select(AdminUser).where(AdminUser.id == user_id))
         if user is None or not user.is_active:
@@ -113,6 +128,7 @@ async def require_gateway_principal(
     user_id = claims.get("sub")
     if not isinstance(user_id, str):
         raise HTTPException(status_code=401, detail="Console token is missing its subject")
+    await _require_live(state, claims)
     async with state.db.session() as session:
         user = await session.scalar(select(AdminUser).where(AdminUser.id == user_id))
         if user is None or not user.is_active:

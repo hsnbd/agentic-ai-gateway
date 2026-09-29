@@ -104,6 +104,11 @@ class UsageService:
         attempt_details = getattr(ctx, "_attempt_details", None)
         if isinstance(attempt_details, list):
             stage_timings["attempts"] = attempt_details
+        rag_details = getattr(ctx, "_rag_details", None)
+        if isinstance(rag_details, dict):
+            stage_timings["rag_retrieval"] = rag_details
+        if ctx.tool_executions:
+            stage_timings["tool_calls"] = ctx.tool_executions
         row = RequestLog(
             request_id=ctx.request_id,
             created_at=now,
@@ -136,7 +141,13 @@ class UsageService:
             guardrail_flagged=ctx.guardrail_flagged,
             guardrail_results=dict(ctx.guardrail_results),
             stream=ctx.request.stream,
-            tool_calls_count=len(response.tool_calls) if response is not None else 0,
+            tool_calls_count=(
+                len(ctx.tool_executions)
+                if ctx.tool_executions
+                else len(response.tool_calls)
+                if response is not None
+                else 0
+            ),
             trace_id=ctx.trace_id,
             tags=list(ctx.request.tags),
             request_body=request_body,

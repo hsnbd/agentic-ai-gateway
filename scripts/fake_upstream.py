@@ -17,6 +17,10 @@ without any out-of-band configuration:
   ``__flaky__``     fails twice per prompt, then succeeds
   ``__slow__``      sleeps 1.5s before responding
   ``__tool__``      returns a tool call for the first declared tool
+                    (``__tool__:<name>`` picks one; required args are filled in)
+  ``__unsafe__``    scored 1.0 by LLM-judge guardrail requests (else 0.0)
+
+A trailing tool message is answered with ``Tool result: <content>``.
 """
 
 from __future__ import annotations
@@ -63,25 +67,73 @@ def _answer(prompt: str) -> str:
 def _tool_calls(prompt: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Return a synthetic tool call when the prompt asks for one.
 
-    Triggered by ``__tool__`` so tool-calling can be exercised without a real
-    provider. The first declared tool is called with empty arguments.
+    Triggered by ``__tool__`` (the first declared tool) or ``__tool__:<name>``
+    (the first tool whose name ends with ``<name>``), so tool-calling and the
+    gateway's agent loop can be exercised without a real provider. Required
+    arguments are filled from the tool's schema: numbers count up from 2,
+    strings are "hi".
     """
-    if "__tool__" not in prompt:
+    if "__tool__" not in prompt or _last_role(payload) == "tool":
         return []
     tools = payload.get("tools") or []
     if not tools:
         return []
-    function = tools[0].get("function") or {}
-    name = function.get("name")
-    if not name:
+    match = re.search(r"__tool__:([A-Za-z0-9_-]+)", prompt)
+    functions = [tool.get("function") or {} for tool in tools]
+    if match:
+        functions = [f for f in functions if str(f.get("name", "")).endswith(match.group(1))]
+    if not functions or not functions[0].get("name"):
         return []
+    function = functions[0]
     return [
         {
             "id": f"call_{uuid.uuid4().hex[:20]}",
             "type": "function",
-            "function": {"name": name, "arguments": "{}"},
+            "function": {
+                "name": function["name"],
+                "arguments": json.dumps(_arguments_for(function.get("parameters") or {})),
+            },
         }
     ]
+
+
+def _arguments_for(schema: dict[str, Any]) -> dict[str, Any]:
+    properties = schema.get("properties") or {}
+    arguments: dict[str, Any] = {}
+    number = 2
+    for name in schema.get("required") or []:
+        kind = (properties.get(name) or {}).get("type")
+        if kind in ("number", "integer"):
+            arguments[name] = number
+            number += 1
+        elif kind == "boolean":
+            arguments[name] = True
+        else:
+            arguments[name] = "hi"
+    return arguments
+
+
+def _last_role(payload: dict[str, Any]) -> str | None:
+    messages = payload.get("messages") or []
+    return messages[-1].get("role") if messages else None
+
+
+def _tool_result(payload: dict[str, Any]) -> str | None:
+    """The content of a trailing tool message, which the fake echoes back."""
+    messages = payload.get("messages") or []
+    if not messages or messages[-1].get("role") != "tool":
+        return None
+    content = messages[-1].get("content")
+    if isinstance(content, list):
+        content = " ".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return str(content or "")
+
+
+def _is_judge_request(payload: dict[str, Any]) -> bool:
+    return any(
+        message.get("role") == "system" and "guardrail judge" in str(message.get("content"))
+        for message in payload.get("messages") or []
+    )
 
 
 def _usage(prompt: str, answer: str) -> dict[str, int]:
@@ -124,7 +176,12 @@ async def chat_completions(request: Request) -> Any:
     if failure is not None:
         return failure
 
-    answer = _answer(prompt)
+    tool_result = _tool_result(payload)
+    answer = _answer(prompt) if tool_result is None else f"Tool result: {tool_result[:180]}"
+    if _is_judge_request(payload):
+        # Deterministic LLM-judge verdicts: "__unsafe__" is a violation.
+        score = 1.0 if "__unsafe__" in prompt else 0.0
+        answer = json.dumps({"score": score, "reason": "fake judge"})
     model = payload.get("model", "gpt-4o-mini")
     created = int(time.time())
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AppBar, Avatar, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Stack, Toolbar, Tooltip, Typography } from '@mui/material';
 import DashboardRounded from '@mui/icons-material/DashboardRounded';
 import KeyRounded from '@mui/icons-material/KeyRounded';
+import GroupsRounded from '@mui/icons-material/GroupsRounded';
 import SmartToyRounded from '@mui/icons-material/SmartToyRounded';
 import ReceiptLongRounded from '@mui/icons-material/ReceiptLongRounded';
 import InsightsRounded from '@mui/icons-material/InsightsRounded';
@@ -24,6 +25,7 @@ const drawerWidth = 252;
 const nav = [
   { label: 'Dashboard', path: '/', icon: DashboardRounded },
   { label: 'Keys', path: '/keys', icon: KeyRounded, admin: true },
+  { label: 'Teams', path: '/teams', icon: GroupsRounded },
   { label: 'Models', path: '/models', icon: SmartToyRounded },
   { label: 'Logs', path: '/logs', icon: ReceiptLongRounded },
   { label: 'Usage', path: '/usage', icon: InsightsRounded },

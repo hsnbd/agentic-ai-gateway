@@ -25,3 +25,15 @@ Feature: Console sign-in
     Then I am on the sign-in page
     When I open the console at "/keys" without signing in
     Then I am on the sign-in page
+
+  Scenario: An expired access token is renewed silently
+    Given I am signed in to the console as the admin
+    When my console access token stops being valid
+    And I go to "/logs"
+    Then I see the "Request logs" page
+
+  Scenario: Signing out revokes the token on the server
+    Given I am signed in to the console as the admin
+    And I remember my console access token
+    When I sign out
+    Then the remembered console token is rejected by the gateway

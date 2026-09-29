@@ -39,6 +39,10 @@ autoscaling:
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
+# Run `alembic upgrade head` in an init container and turn off the gateway's
+# own create-missing-tables startup step. Recommended for production.
+migrations:
+  enabled: true
 env:
   ENVIRONMENT: prod
   PORT: "8000"

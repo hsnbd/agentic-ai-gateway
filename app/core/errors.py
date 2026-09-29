@@ -6,6 +6,7 @@ retry, and fallback logic never needs provider-specific knowledge.
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 from typing import Any
 
@@ -33,6 +34,7 @@ class ErrorCode(StrEnum):
     NO_HEALTHY_DEPLOYMENT = "no_healthy_deployment"
     ALL_PROVIDERS_FAILED = "all_providers_failed"
     CONFIGURATION_ERROR = "configuration_error"
+    RAG_UNAVAILABLE = "rag_unavailable"
     INTERNAL_ERROR = "internal_error"
 
 
@@ -72,6 +74,7 @@ _HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.NO_HEALTHY_DEPLOYMENT: 503,
     ErrorCode.ALL_PROVIDERS_FAILED: 502,
     ErrorCode.CONFIGURATION_ERROR: 500,
+    ErrorCode.RAG_UNAVAILABLE: 503,
     ErrorCode.INTERNAL_ERROR: 500,
 }
 
@@ -180,3 +183,8 @@ class AllProvidersFailedError(GatewayError):
 class ConfigurationError(GatewayError):
     def __init__(self, message: str, **kw: Any) -> None:
         super().__init__(ErrorCode.CONFIGURATION_ERROR, message, **kw)
+
+
+def retry_after_header(seconds: float) -> str:
+    """Whole seconds for `Retry-After`, rounded up so clients never retry early."""
+    return str(max(1, math.ceil(seconds)))

@@ -1,0 +1,77 @@
+# Guardrail policies for end-to-end evaluation: the production defaults plus a
+# `judged` policy that exercises the LLM-judge rule against the fake upstream
+# (scripts/fake_upstream.py scores "__unsafe__" text as a violation).
+#
+#   GUARDRAILS_CONFIG_PATH=config/guardrails.eval.yaml
+
+policies:
+  default:
+    description: Balanced protection for common prompt injection, PII, and oversized input.
+    input:
+      - name: block-prompt-injection
+        type: regex
+        pattern: "ignore\\s+(?:all\\s+)?previous\\s+instructions|disregard\\s+(?:all\\s+)?prior\\s+instructions|reveal\\s+(?:your\\s+)?system\\s+prompt"
+        ignorecase: true
+        action: block
+        severity: high
+      - name: redact-pii
+        type: pii
+        entities: [EMAIL, SSN, CREDIT_CARD]
+        action: redact
+        severity: high
+        mode: mask
+      - name: input-length
+        type: length
+        max_chars: 20000
+        max_messages: 100
+        action: block
+        severity: medium
+    output:
+      - name: redact-leaked-api-keys
+        type: regex
+        pattern: "(?i)(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|ASIA[A-Z0-9]{16}|Bearer\\s+[A-Za-z0-9._~+/=-]{12,})"
+        action: redact
+        severity: critical
+        replacement: "[API_KEY_REDACTED]"
+
+  strict:
+    description: Strict limits and additional sensitive-data checks for untrusted clients.
+    input:
+      - name: block-prompt-injection
+        type: regex
+        pattern: "ignore\\s+(?:all\\s+)?previous\\s+instructions|disregard\\s+(?:all\\s+)?prior\\s+instructions|reveal\\s+(?:your\\s+)?system\\s+prompt"
+        ignorecase: true
+        action: block
+        severity: critical
+      - name: redact-pii
+        type: pii
+        entities: [EMAIL, PHONE, SSN, CREDIT_CARD, IP_ADDRESS, AWS_ACCESS_KEY, API_KEY]
+        action: redact
+        severity: high
+        mode: mask
+      - name: strict-input-length
+        type: length
+        max_chars: 8000
+        max_messages: 30
+        action: block
+        severity: high
+    output:
+      - name: redact-leaked-api-keys
+        type: regex
+        pattern: "(?i)(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|ASIA[A-Z0-9]{16}|Bearer\\s+[A-Za-z0-9._~+/=-]{12,})"
+        action: redact
+        severity: critical
+        replacement: "[API_KEY_REDACTED]"
+
+  judged:
+    description: Model-judged safety review (LLM-judge), for evaluation.
+    input:
+      - name: judge-safety
+        type: llm_judge
+        model: eval-chat
+        prompt: The request must not ask for anything unsafe or harmful.
+        threshold: 0.5
+        action: block
+        severity: high
+        on_error: allow
+    output: []

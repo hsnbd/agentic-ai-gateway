@@ -28,6 +28,13 @@ Every environment variable maps to a field on `Settings` in
 | `DB_POOL_SIZE` | `10` | Connection pool size |
 | `DB_MAX_OVERFLOW` | `20` | Overflow connections |
 | `DB_ECHO` | `false` | Log every SQL statement |
+| `AUTO_CREATE_SCHEMA` | `true` | Create missing tables at startup. Turn off in production and run migrations instead |
+
+**Migrations.** The schema is owned by Alembic (`app/db/migrations`). Run
+`aigateway migrate` (or `make migrate`) before starting a new version; the Helm
+chart does this in an init container when `migrations.enabled` is true (the
+default), and sets `AUTO_CREATE_SCHEMA=false`. A database created earlier by
+`AUTO_CREATE_SCHEMA` can be adopted with `aigateway db-stamp`.
 
 ### Security
 
@@ -35,6 +42,8 @@ Every environment variable maps to a field on `Settings` in
 |---|---|---|
 | `MASTER_KEY` | — | Root key; bypasses virtual-key checks. Treat as a secret |
 | `JWT_SECRET` | — | Signs console sessions. Use at least 32 bytes |
+| `JWT_ACCESS_TTL_SECONDS` | `3600` | Console access-token lifetime |
+| `JWT_REFRESH_TTL_SECONDS` | `604800` | Refresh-token lifetime; the console renews access tokens silently until it expires |
 | `BOOTSTRAP_ADMIN_EMAIL` | — | First-run console admin |
 | `BOOTSTRAP_ADMIN_PASSWORD` | — | First-run console password; change after login |
 
@@ -90,6 +99,7 @@ subtly wrong answer. Treat it as a correctness setting, not a performance knob.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GUARDRAILS_ENABLED` | `true` | Master switch |
+| `GUARDRAILS_STREAM_HOLDBACK_CHARS` | `128` | Characters held back while streaming so output redaction sees a match whole before sending it |
 | `LOG_LEVEL` | `INFO` | Logging threshold |
 | `LOG_FORMAT` | `json` | `json` or `console` |
 | `LOG_REQUEST_BODIES` | `false` | Log prompts and responses. Privacy-sensitive |
@@ -176,6 +186,31 @@ Actions:
 Redaction resolves all matches across all rules over the *original* text in a single
 pass, so overlapping entities cannot corrupt each other.
 
+**Streaming.** Output rules also apply to streamed responses. The gateway holds
+back the last `GUARDRAILS_STREAM_HOLDBACK_CHARS` characters and never releases
+part of a match, so a secret split across chunks is still redacted; a `block`
+rule ends the stream with a `guardrail_violation` error event. A match longer
+than the holdback can leak partly.
+
+**LLM judge.** A rule of `type: llm_judge` asks a model to score the text
+against a natural-language policy:
+
+```yaml
+      - name: judge-safety
+        type: llm_judge
+        model: gpt-4o-mini        # any configured chat model
+        prompt: The request must not ask for anything unsafe or harmful.
+        threshold: 0.5            # score (0-1) at or above which the rule matches
+        action: block
+        on_error: allow           # allow (fail open, default) | block (fail closed)
+```
+
+The judge is called directly through the provider registry, not through the
+chat pipeline: it is not itself guarded, cached, or billed to the caller's key.
+It adds a model round trip to every request under that policy, so bind it to
+the keys that need it. It judges whole texts; on streamed output it records a
+violation after the fact rather than filtering chunks.
+
 ## Per-request overrides
 
 Clients may override gateway behaviour per request. These fields are consumed by
@@ -188,4 +223,9 @@ the gateway and never forwarded upstream:
 | `fallbacks` | Explicit ordered fallback models |
 | `routing_strategy` | Override the strategy for this request |
 | `guardrail_policy` | Use a named policy |
-| `tags` | Labels for conditional routing and log filtering |
+| `tags` | Labels recorded in the request log. With `routing_strategy: conditional`, deployments whose `tags` share one with the request are preferred (cheapest first) |
+| `rag` | Ground the request in a RAG collection: `{"collection_id": ..., "top_k": 5, "min_score": 0, "mode": "system" \| "user", "max_context_tokens": 4000, "filters": {...}}`. Sources come back in `aigw.sources` and `X-Gateway-RAG-Sources` |
+| `mcp` | Let the gateway run MCP tools for this request: `{"servers": [ids] \| null, "max_iterations": 8}`. See [Agent & SDK setup](./agents.md#server-side-rag-and-tools) |
+
+Every field can also be nested under `aigw` (e.g. OpenAI SDK
+`extra_body={"aigw": {...}}`) or `metadata`; both dialects accept them.

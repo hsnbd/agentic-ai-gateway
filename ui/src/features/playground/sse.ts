@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'aigateway.console.token';
+import { refreshSession, session } from '../../api/client';
 
 export interface StreamEvent {
   event: string;
@@ -35,10 +35,15 @@ export async function streamChat(
   onEvent: (event: StreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<StreamResult> {
-  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
-  const token = localStorage.getItem(TOKEN_KEY);
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  const response = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  const open = (): Promise<Response> => {
+    const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
+    const token = session.token();
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+    return fetch(path, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  };
+  let response = await open();
+  // An expired access token is renewed once, as for every other console call.
+  if (response.status === 401 && await refreshSession()) response = await open();
   if (!response.ok) {
     const contentType = response.headers.get('content-type') ?? '';
     const payload: unknown = contentType.includes('application/json') ? await response.json() : await response.text();

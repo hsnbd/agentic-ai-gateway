@@ -22,7 +22,7 @@ from app.core.schemas import (
     ToolChoice,
     ToolDef,
 )
-from app.dialects.base import Dialect
+from app.dialects.base import Dialect, extract_gateway_fields
 
 
 class AnthropicDialect(Dialect):
@@ -80,6 +80,7 @@ class AnthropicDialect(Dialect):
             "tool_choice": tool_choice,
             "metadata": metadata,
             "user": metadata.get("user_id"),
+            **extract_gateway_fields(payload),
         }
         try:
             return ChatRequest.model_validate(request)
@@ -130,7 +131,19 @@ class AnthropicDialect(Dialect):
                 "input_tokens": response.usage.prompt_tokens,
                 "output_tokens": response.usage.completion_tokens,
             },
+            # Gateway extras; Anthropic SDKs ignore unknown top-level fields.
+            **self._gateway_extras(response),
         }
+
+    @staticmethod
+    def _gateway_extras(response: ChatResponse) -> dict[str, Any]:
+        extras: dict[str, Any] = {}
+        if response.sources:
+            extras["sources"] = response.sources
+        if response.stop_reason:
+            extras["stop_reason"] = response.stop_reason
+            extras["tool_calls_executed"] = response.tool_calls_executed
+        return {"aigw": extras} if extras else {}
 
     def encode_chunk(self, chunk: StreamChunk, state: dict[str, Any]) -> list[str]:
         events: list[str] = []

@@ -124,6 +124,10 @@ class SemanticCache:
             "presence_penalty": ctx.request.presence_penalty,
             "frequency_penalty": ctx.request.frequency_penalty,
             "n": ctx.request.n,
+            # A grounded answer is only reusable for the same retrieval.
+            "rag": (
+                ctx.request.rag.model_dump(mode="json") if ctx.request.rag is not None else None
+            ),
         }
         encoded = json.dumps(namespace_data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -181,6 +185,10 @@ class SemanticCache:
             ctx.cache_similarity = similarity
             ctx.cost_saved_usd = cached.cost_usd or 0.0
             await self._increment_counter("hits")
+            # What the original provider call took, minus the lookup just spent.
+            saved_ms = (cached.latency_ms or 0.0) - ctx.elapsed_ms()
+            if saved_ms > 0:
+                await self._add_latency_saved(saved_ms)
             return response
         except Exception:
             logger.warning("Semantic cache lookup failed; continuing without cache", exc_info=True)
@@ -284,8 +292,8 @@ class SemanticCache:
             logger.warning("Semantic cache invalidation failed", exc_info=True)
             return 0
 
-    async def stats(self) -> dict[str, int]:
-        """Return entry and Redis-persisted hit/miss counts."""
+    async def stats(self) -> dict[str, Any]:
+        """Return entry and Redis-persisted hit/miss/latency-saved counters."""
         if not self.available:
             return {"entries": 0, "hits": 0, "misses": 0}
         try:
@@ -294,7 +302,13 @@ class SemanticCache:
                 entries += 1
             hits = self._to_int(await self.redis.get(f"{_STATS_PREFIX}hits"))
             misses = self._to_int(await self.redis.get(f"{_STATS_PREFIX}misses"))
-            return {"entries": entries, "hits": hits, "misses": misses}
+            saved = await self.redis.get(f"{_STATS_PREFIX}latency_saved_ms")
+            return {
+                "entries": entries,
+                "hits": hits,
+                "misses": misses,
+                "latency_saved_ms": float(self._as_text(saved)) if saved else 0.0,
+            }
         except Exception:
             logger.warning("Semantic cache stats unavailable", exc_info=True)
             return {"entries": 0, "hits": 0, "misses": 0}
@@ -327,6 +341,12 @@ class SemanticCache:
         ][-_TAIL_MESSAGES:]
         recent.append(ctx.request.messages[-1])
         return "\n".join(f"{message.role.value}: {message.text()}" for message in recent)
+
+    async def _add_latency_saved(self, milliseconds: float) -> None:
+        try:
+            await self.redis.incrbyfloat(f"{_STATS_PREFIX}latency_saved_ms", milliseconds)
+        except Exception:
+            logger.warning("Unable to record semantic cache latency saved", exc_info=True)
 
     async def _increment_counter(self, name: str) -> None:
         try:

@@ -28,8 +28,9 @@ def build_pipeline(state: GatewayState) -> Pipeline:
 
     Pre-stages (any may short-circuit):
       1. auth        — identify the key, enforce rate limits and budgets
-      2. guardrails  — inspect the prompt before it costs anything
-      3. cache       — a hit here skips the provider call entirely
+      2. rag         — ground the request in a collection (`aigw.rag` only)
+      3. guardrails  — inspect the prompt (and retrieved text) before it costs anything
+      4. cache       — a hit here skips the provider call entirely
 
     Then the resilient executor performs routing, retries, and fallbacks.
 
@@ -49,6 +50,12 @@ def build_pipeline(state: GatewayState) -> Pipeline:
     auth = _build_auth(state)
     if auth is not None:
         pre.append(auth)
+
+    # Before guardrails and cache: retrieved text is screened, and the cache
+    # keys on the grounded request. It is a no-op unless a request asks for it.
+    from app.rag.stage import RagStage
+
+    pre.append(RagStage())
 
     guard_in, guard_out = _build_guardrails(state)
     if guard_in is not None:
@@ -105,8 +112,48 @@ def _build_guardrails(state: GatewayState) -> tuple[Stage | None, PostStage | No
         logger.warning("stage_unavailable", stage="guardrails", reason=str(exc))
         return None, None
 
+    registry.set_judge(_judge_client(state))
     state.components["guardrails"] = registry
-    return InputGuardrailStage(registry), OutputGuardrailStage(registry)
+    return InputGuardrailStage(registry), OutputGuardrailStage(
+        registry,
+        stream_holdback=getattr(state.settings, "guardrails_stream_holdback_chars", 128),
+    )
+
+
+def _judge_client(state: GatewayState) -> Any:
+    """Call a judge model directly through the provider registry.
+
+    Deliberately not through the pipeline: a judge call must not be guarded by
+    the rule that is waiting on it, cached, or billed to the caller's key.
+    Deployments are tried in priority order.
+    """
+    from app.core.errors import NoHealthyDeploymentError
+    from app.core.schemas import ChatRequest, Message, Role
+
+    async def judge(model: str, instructions: str, text: str) -> str:
+        deployments = sorted(
+            (d for d in state.registry.deployments_for(model) if d.capabilities.chat),
+            key=lambda d: d.priority,
+        )
+        request = ChatRequest(
+            model=model,
+            messages=[
+                Message(role=Role.SYSTEM, content=instructions),
+                Message(role=Role.USER, content=text),
+            ],
+            temperature=0,
+            max_tokens=200,
+        )
+        last_error: Exception = NoHealthyDeploymentError(f"No deployment for judge {model!r}")
+        for deployment in deployments:
+            try:
+                response = await state.registry.provider_for(deployment).chat(request, deployment)
+                return response.text
+            except Exception as exc:
+                last_error = exc
+        raise last_error
+
+    return judge
 
 
 def _build_cache(state: GatewayState) -> tuple[Stage | None, PostStage | None]:
@@ -195,10 +242,15 @@ def _build_executor(state: GatewayState) -> Any:
     state.breaker = breaker
     state.router = router
 
-    return ResilientExecutor(
-        state.registry,
-        router,
-        breaker,
-        policy,
-        max_fallbacks=settings.max_fallbacks,
+    from app.tools.agent import AgenticExecutor
+
+    return AgenticExecutor(
+        ResilientExecutor(
+            state.registry,
+            router,
+            breaker,
+            policy,
+            max_fallbacks=settings.max_fallbacks,
+            redis=state.redis,
+        )
     )

@@ -82,6 +82,44 @@ When('I list models with the OpenAI SDK', async function (this: GatewayWorld) {
   sdk(this).models = ids;
 });
 
+When(
+  'I ask {string} {string} with the OpenAI SDK grounded in the collection',
+  async function (this: GatewayWorld, model: string, text: string) {
+    sdk(this).completion = await openai(this).chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: text }],
+      // @ts-expect-error gateway extension passed through the SDK's extra body
+      aigw: { rag: { collection_id: this.vars.collectionId, top_k: 1 } },
+    });
+  },
+);
+
+When(
+  'I ask {string} {string} with the OpenAI SDK using the registered MCP server',
+  async function (this: GatewayWorld, model: string, text: string) {
+    sdk(this).completion = await openai(this).chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: text }],
+      // @ts-expect-error gateway extension passed through the SDK's extra body
+      aigw: { mcp: { servers: [this.vars.mcpServerId] } },
+    });
+  },
+);
+
+/** The gateway's `aigw` extras on an SDK completion. */
+function extras(world: GatewayWorld): { sources?: Array<{ text: string }>; tool_calls_executed?: number } {
+  return (sdk(world).completion as unknown as { aigw?: Record<string, never> })?.aigw ?? {};
+}
+
+Then('the SDK reply cites a source mentioning {string}', function (this: GatewayWorld, text: string) {
+  const sources = extras(this).sources ?? [];
+  assert.ok(sources.some((source) => source.text.includes(text)), JSON.stringify(sources));
+});
+
+Then('the SDK reports {int} tool call(s) executed by the gateway', function (this: GatewayWorld, count: number) {
+  assert.equal(extras(this).tool_calls_executed, count);
+});
+
 Then('the SDK reply is {string}', function (this: GatewayWorld, text: string) {
   assert.equal(sdk(this).completion?.choices[0]?.message.content, text);
 });

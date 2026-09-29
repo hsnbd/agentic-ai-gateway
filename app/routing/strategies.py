@@ -172,7 +172,8 @@ class PriorityStrategy(RoutingStrategy):
 class ConditionalStrategy(RoutingStrategy):
     """Route on request shape rather than on static configuration.
 
-    Long prompts go to large-context deployments; tool use goes to
+    In order: request `tags` matching deployment tags win (cheapest match);
+    long prompts go to large-context deployments; tool use goes to
     tool-capable ones; short prompts prefer deployments tagged `cheap`.
     """
 
@@ -185,6 +186,12 @@ class ConditionalStrategy(RoutingStrategy):
         self, candidates: list[Deployment], request: ChatRequest, breaker: CircuitBreaker
     ) -> tuple[Deployment, str]:
         prompt_tokens = _estimated_prompt_tokens(request)
+
+        tagged = _tag_matches(candidates, request)
+        if tagged:
+            best, _ = LeastCostStrategy().select(tagged, request, breaker)
+            shared = sorted(set(best.tags) & set(request.tags))
+            return best, f"request tags {', '.join(shared)} matched deployment tags"
 
         if prompt_tokens >= self._long_context_threshold:
             large = [
@@ -219,10 +226,19 @@ class ConditionalStrategy(RoutingStrategy):
         self, candidates: list[Deployment], request: ChatRequest, breaker: CircuitBreaker
     ) -> list[Deployment]:
         chosen, _ = self.select(candidates, request, breaker)
-        rest = LeastCostStrategy().order(
-            [d for d in candidates if d.id != chosen.id], request, breaker
-        )
-        return [chosen, *rest]
+        rest = [d for d in candidates if d.id != chosen.id]
+        # Other tag matches are the first fallbacks, then everything else.
+        tagged = {d.id for d in _tag_matches(rest, request)}
+        return [
+            chosen,
+            *LeastCostStrategy().order([d for d in rest if d.id in tagged], request, breaker),
+            *LeastCostStrategy().order([d for d in rest if d.id not in tagged], request, breaker),
+        ]
+
+
+def _tag_matches(candidates: list[Deployment], request: ChatRequest) -> list[Deployment]:
+    wanted = set(request.tags)
+    return [d for d in candidates if wanted & set(d.tags)] if wanted else []
 
 
 _STRATEGIES: dict[str, RoutingStrategy] = {

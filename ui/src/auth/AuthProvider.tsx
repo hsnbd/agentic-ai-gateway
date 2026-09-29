@@ -1,8 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
-import { apiRequest, setUnauthorizedHandler } from '../api/client';
+import { apiRequest, session, setUnauthorizedHandler } from '../api/client';
 import type { AdminUser, LoginResponse } from '../api/types';
 
-const TOKEN_KEY = 'aigateway.console.token';
 export interface AuthUser { username: string; role: 'admin' | 'viewer'; fullName: string | null }
 interface AuthValue { token: string | null; user: AuthUser | null; ready: boolean; login: (email: string, password: string) => Promise<void>; logout: () => void }
 const AuthContext = createContext<AuthValue | undefined>(undefined);
@@ -13,16 +12,19 @@ function decodeUser(token: string): AuthUser | null {
     const part = token.split('.')[1]; if (!part) return null;
     const claims = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/'))) as { email?: unknown; role?: unknown; exp?: unknown };
     if (typeof claims.email !== 'string' || (claims.role !== 'admin' && claims.role !== 'viewer')) return null;
-    if (typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now()) return null;
+    // An expired access token is fine here: the first API call renews it with
+    // the refresh token, or signs the user out if that fails.
     return { username: claims.email, role: claims.role, fullName: null };
   } catch { return null; }
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
-  const [user, setUser] = useState<AuthUser | null>(() => { const saved = localStorage.getItem(TOKEN_KEY); return saved ? decodeUser(saved) : null; });
+  const [token, setToken] = useState<string | null>(() => session.token());
+  const [user, setUser] = useState<AuthUser | null>(() => { const saved = session.token(); return saved ? decodeUser(saved) : null; });
   const [ready, setReady] = useState(false);
-  const clearSession = useCallback(() => { localStorage.removeItem(TOKEN_KEY); setToken(null); setUser(null); }, []);
+  const clearSession = useCallback(() => { session.clear(); setToken(null); setUser(null); }, []);
+  // A silent refresh in the API client swaps the token underneath us.
+  useEffect(() => session.subscribe((next) => setToken(next)), []);
   useEffect(() => { setUnauthorizedHandler(clearSession); return () => setUnauthorizedHandler(() => undefined); }, [clearSession]);
   useEffect(() => {
     if (!token || !user?.username) { if (token) clearSession(); setReady(true); return; }
@@ -34,11 +36,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [token, user?.username, clearSession]);
   const login = useCallback(async (email: string, password: string) => {
     const result = await apiRequest<LoginResponse>('/admin/api/auth/login', { method: 'POST', body: { email, password } });
-    localStorage.setItem(TOKEN_KEY, result.access_token); setToken(result.access_token); setUser(toAuthUser(result.user)); setReady(true);
+    session.set(result.access_token, result.refresh_token); setUser(toAuthUser(result.user)); setReady(true);
   }, []);
-  // Tell the server (for its audit trail and any future token revocation), but
-  // never let a failed call keep the user signed in locally.
-  const logout = useCallback(() => { if (token) void apiRequest('/admin/api/auth/logout', { method: 'POST' }).catch(() => undefined); clearSession(); }, [token, clearSession]);
+  // Revoke the session server-side (access and refresh token), but never let a
+  // failed call keep the user signed in locally.
+  const logout = useCallback(() => {
+    const access = session.token(); const refresh = session.refreshToken();
+    clearSession();
+    if (access) void apiRequest('/admin/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${access}` }, body: { refresh_token: refresh } }).catch(() => undefined);
+  }, [clearSession]);
   const value = useMemo(() => ({ token, user, ready, login, logout }), [token, user, ready, login, logout]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

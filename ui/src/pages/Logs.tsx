@@ -4,8 +4,8 @@ import { DataGrid } from '@mui/x-data-grid';
 import type { GridColDef, GridPaginationModel } from '@mui/x-data-grid';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
-import { ApiError, apiRequest } from '../api/client';
-import { useFilteredLogs, useLogDetail } from '../api/hooks/useLogsObservability';
+import { ApiError, apiDownload, apiRequest } from '../api/client';
+import { logsExportPath, useFilteredLogs, useLogDetail } from '../api/hooks/useLogsObservability';
 import { ErrorState, EmptyState, JsonViewer, LoadingState, PageHeader } from '../components/Shared';
 import { formatMoney, formatNumber, formatTimestamp } from '../features/observability/format';
 import type { LogDetail, LogRow } from '../features/observability/types';
@@ -131,6 +131,8 @@ export default function Logs() {
   const range = validRange(searchParams.get('range'));
   const pageSize = positiveNumber(searchParams.get('limit'), 25);
   const offset = Math.max(0, Number(searchParams.get('offset')) || 0);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const filters = useMemo(() => ({
     limit: PAGE_SIZES.includes(pageSize) ? pageSize : 25,
     offset,
@@ -178,7 +180,8 @@ export default function Logs() {
 
   const pageModel: GridPaginationModel = { page: Math.floor(offset / filters.limit), pageSize: filters.limit };
   return <>
-    <PageHeader title="Request logs" description="Search request-level activity. Results are fetched in bounded server-side pages." />
+    <PageHeader title="Request logs" description="Search request-level activity. Results are fetched in bounded server-side pages." action={<Button variant="outlined" disabled={exporting} onClick={() => { setExporting(true); setExportError(null); apiDownload(logsExportPath(filters), 'request-logs.csv').catch((error: unknown) => setExportError(error instanceof Error ? error.message : 'Export failed')).finally(() => setExporting(false)); }}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>} />
+    {exportError && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setExportError(null)}>{exportError}</Alert>}
     <Grid container spacing={1.5} sx={{ mb: 2 }}>
       <Grid item xs={12} sm={4} md={2.4}><FormControl fullWidth size="small"><InputLabel id="log-range-label">Time range</InputLabel><Select labelId="log-range-label" label="Time range" value={range} onChange={(event) => updateParam('range', event.target.value)}>
         <MenuItem value="1h">Last hour</MenuItem><MenuItem value="24h">Last 24 hours</MenuItem><MenuItem value="7d">Last 7 days</MenuItem><MenuItem value="30d">Last 30 days</MenuItem><MenuItem value="all">All time</MenuItem>
