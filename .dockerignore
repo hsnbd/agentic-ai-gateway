@@ -1,0 +1,18 @@
+.git
+.github
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+node_modules
+ui/node_modules
+# Built by the ui-build stage; excluding it keeps a stale local build from
+# leaving orphaned hashed assets in the image, since COPY merges directories.
+app/ui_static
+test_boot.db
+.env
+deploy
+tests
+docs

@@ -1,0 +1,93 @@
+[project]
+name = "aigateway"
+version = "0.1.0"
+description = "Agentic AI Gateway - unified middleware between AI applications and LLM providers"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "httpx>=0.27.2",
+    "redis>=5.2.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "greenlet>=3.1.0",
+    "pyyaml>=6.0.2",
+    "python-multipart>=0.0.12",
+    "argon2-cffi>=23.1.0",
+    "pyjwt>=2.10.0",
+    "tiktoken>=0.8.0",
+    "prometheus-client>=0.21.0",
+    "opentelemetry-api>=1.28.0",
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.28.0",
+    "structlog>=24.4.0",
+    "mcp>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "respx>=0.21.1",
+    "ruff>=0.7.0",
+    "mypy>=1.13.0",
+    "types-pyyaml>=6.0.12",
+    "anyio>=4.6.0",
+    "aiosqlite>=0.20.0",
+]
+
+[project.scripts]
+aigateway = "app.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF", "ASYNC"]
+ignore = ["B008", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"app/db/migrations/*" = ["E501", "N999"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+markers = [
+    "integration: tests requiring Redis/Postgres",
+    "live: tests calling real provider APIs",
+]
+
+[dependency-groups]
+dev = [
+    "anthropic>=1.9.0",
+    "openai>=3.20.0",
+]

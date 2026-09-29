@@ -1,0 +1,34 @@
+# Prices are USD per million tokens. Review against provider pricing pages regularly.
+models:
+  gpt-4o:
+    input_per_mtok: 2.50
+    output_per_mtok: 10.00
+    cached_input_per_mtok: 1.25
+  gpt-4o-mini:
+    input_per_mtok: 0.15
+    output_per_mtok: 0.60
+    cached_input_per_mtok: 0.075
+  text-embedding-3-small:
+    input_per_mtok: 0.02
+    output_per_mtok: 0.0
+    cached_input_per_mtok: 0.02
+  claude-sonnet-4:
+    input_per_mtok: 3.00
+    output_per_mtok: 15.00
+    cached_input_per_mtok: 0.30
+  claude-haiku-3-5:
+    input_per_mtok: 0.80
+    output_per_mtok: 4.00
+    cached_input_per_mtok: 0.80
+  gemini-2-flash:
+    input_per_mtok: 0.10
+    output_per_mtok: 0.40
+    cached_input_per_mtok: 0.10
+  llama3.1:
+    input_per_mtok: 0.0
+    output_per_mtok: 0.0
+    cached_input_per_mtok: 0.0
+  nomic-embed-text:
+    input_per_mtok: 0.0
+    output_per_mtok: 0.0
+    cached_input_per_mtok: 0.0

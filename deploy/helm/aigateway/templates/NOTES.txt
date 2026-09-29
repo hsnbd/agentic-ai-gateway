@@ -1,0 +1,8 @@
+Agentic AI Gateway is deployed.
+
+Port-forward the service:
+  kubectl port-forward svc/{{ include "aigateway.fullname" . }} 8000:8000
+
+Check health:
+  curl http://127.0.0.1:8000/healthz
+  curl http://127.0.0.1:8000/readyz

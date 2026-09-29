@@ -1,0 +1,60 @@
+replicaCount: 2
+image:
+  repository: aigateway
+  tag: latest
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/path: /metrics
+  prometheus.io/port: "8000"
+service:
+  type: ClusterIP
+  port: 8000
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: aigateway.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {cpu: "2", memory: 2Gi}
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetRequestsPerSecond: null
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+env:
+  ENVIRONMENT: prod
+  PORT: "8000"
+  DATABASE_URL: postgresql+asyncpg://aigateway:password@postgres:5432/aigateway
+  REDIS_URL: redis://redis:6379/0
+  OLLAMA_BASE_URL: http://ollama:11434
+  METRICS_ENABLED: "true"
+  UI_ENABLED: "true"
+  CACHE_ENABLED: "true"
+  GUARDRAILS_ENABLED: "true"
+secretEnv:
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  GEMINI_API_KEY: ""
+external:
+  postgres: {url: ""}
+  redis: {url: ""}
+config:
+  mountPath: /app/config

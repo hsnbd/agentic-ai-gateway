@@ -1,0 +1,145 @@
+# Model catalogue for the Agentic AI Gateway.
+#
+# Each entry binds a public `model_name` (what clients request) to a concrete
+# provider deployment. Several entries may share one model_name; the router
+# then load-balances across them.
+#
+# Values support ${ENV_VAR} and ${ENV_VAR:-default} expansion.
+
+model_list:
+  # ---------------------------------------------------------------- OpenAI
+  - model_name: gpt-4o
+    params:
+      provider: openai
+      model: gpt-4o
+      api_key: ${OPENAI_API_KEY}
+    capabilities:
+      tools: true
+      parallel_tool_calls: true
+      vision: true
+      json_mode: true
+      max_context_tokens: 128000
+      max_output_tokens: 16384
+    pricing:
+      input_per_mtok: 2.50
+      output_per_mtok: 10.00
+      cached_input_per_mtok: 1.25
+    tags: [frontier, vision]
+
+  - model_name: gpt-4o-mini
+    params:
+      provider: openai
+      model: gpt-4o-mini
+      api_key: ${OPENAI_API_KEY}
+    capabilities:
+      tools: true
+      parallel_tool_calls: true
+      vision: true
+      json_mode: true
+      max_context_tokens: 128000
+      max_output_tokens: 16384
+    pricing:
+      input_per_mtok: 0.15
+      output_per_mtok: 0.60
+      cached_input_per_mtok: 0.075
+    tags: [cheap, fast]
+
+  - model_name: text-embedding-3-small
+    params:
+      provider: openai
+      model: text-embedding-3-small
+      api_key: ${OPENAI_API_KEY}
+    capabilities:
+      chat: false
+      streaming: false
+      embeddings: true
+      max_context_tokens: 8191
+    pricing:
+      input_per_mtok: 0.02
+    tags: [embedding]
+
+  # ------------------------------------------------------------- Anthropic
+  - model_name: claude-sonnet-4
+    params:
+      provider: anthropic
+      model: claude-sonnet-4-20250514
+      api_key: ${ANTHROPIC_API_KEY}
+    capabilities:
+      tools: true
+      parallel_tool_calls: true
+      vision: true
+      max_context_tokens: 200000
+      max_output_tokens: 64000
+    pricing:
+      input_per_mtok: 3.00
+      output_per_mtok: 15.00
+      cached_input_per_mtok: 0.30
+    tags: [frontier, coding]
+
+  - model_name: claude-haiku-3-5
+    params:
+      provider: anthropic
+      model: claude-3-5-haiku-20241022
+      api_key: ${ANTHROPIC_API_KEY}
+    capabilities:
+      tools: true
+      vision: true
+      max_context_tokens: 200000
+      max_output_tokens: 8192
+    pricing:
+      input_per_mtok: 0.80
+      output_per_mtok: 4.00
+    tags: [cheap, fast]
+
+  # ---------------------------------------------------------------- Gemini
+  - model_name: gemini-2-flash
+    params:
+      provider: gemini
+      model: gemini-2.0-flash
+      api_key: ${GEMINI_API_KEY}
+    capabilities:
+      tools: true
+      vision: true
+      json_mode: true
+      max_context_tokens: 1048576
+      max_output_tokens: 8192
+    pricing:
+      input_per_mtok: 0.10
+      output_per_mtok: 0.40
+    tags: [cheap, fast, long-context]
+
+  # ---------------------------------------------------------------- Ollama
+  - model_name: llama3.1
+    params:
+      provider: ollama
+      model: llama3.1:8b
+    capabilities:
+      tools: true
+      max_context_tokens: 131072
+    pricing:
+      input_per_mtok: 0.0
+      output_per_mtok: 0.0
+    tags: [local, free]
+
+  # Default embedder for the semantic cache and RAG: local, so caching adds
+  # no marginal API cost.
+  - model_name: nomic-embed-text
+    params:
+      provider: ollama
+      model: nomic-embed-text
+    capabilities:
+      chat: false
+      streaming: false
+      embeddings: true
+      max_context_tokens: 8192
+    pricing:
+      input_per_mtok: 0.0
+    tags: [local, free, embedding]
+
+# Convenience names clients may use instead of a concrete model.
+aliases:
+  gpt-4: gpt-4o
+  fast: gpt-4o-mini
+  cheap: gemini-2-flash
+  best: claude-sonnet-4
+  local: llama3.1

@@ -1,0 +1,10 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aigateway.fullname" . }}
+  labels: {{- include "aigateway.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector: {matchLabels: {app.kubernetes.io/name: {{ include "aigateway.name" . }}, app.kubernetes.io/instance: {{ .Release.Name }}}}
+{{- end }}

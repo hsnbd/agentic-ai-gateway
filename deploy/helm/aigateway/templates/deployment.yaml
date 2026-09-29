@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aigateway.fullname" . }}
+  labels: {{- include "aigateway.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector: {matchLabels: {app.kubernetes.io/name: {{ include "aigateway.name" . }}, app.kubernetes.io/instance: {{ .Release.Name }}}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: {{ include "aigateway.name" . }}, app.kubernetes.io/instance: {{ .Release.Name }}}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "aigateway.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{name: http, containerPort: 8000, protocol: TCP}]
+          env:
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- range $key, $_ := .Values.secretEnv }}
+            - name: {{ $key }}
+              valueFrom: {secretKeyRef: {name: {{ include "aigateway.fullname" $ }}-secrets, key: {{ $key }}}}
+            {{- end }}
+            {{- if .Values.external.postgres.url }}
+            - name: DATABASE_URL
+              value: {{ .Values.external.postgres.url | quote }}
+            {{- end }}
+            {{- if .Values.external.redis.url }}
+            - name: REDIS_URL
+              value: {{ .Values.external.redis.url | quote }}
+            {{- end }}
+          volumeMounts: [{name: config, mountPath: /app/config, readOnly: true}]
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes: [{name: config, configMap: {name: {{ include "aigateway.fullname" . }}-config}}]

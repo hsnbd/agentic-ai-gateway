@@ -1,0 +1,110 @@
+# Model catalogue for end-to-end evaluation.
+#
+# Point the gateway at this file with:
+#
+#   MODELS_CONFIG_PATH=config/models.eval.yaml
+#
+# It is designed to make the gateway's reliability and routing behaviour
+# *observable*, which the production catalogue cannot do on its own:
+#
+#  - `eval-chat` has two deployments. The first points at a port with nothing
+#    listening, so every request to it fails and the gateway must fall back to
+#    the second. That turns provider failover from a claim into a measurement.
+#  - `eval-router` has two healthy deployments with different prices, weights,
+#    and priorities, so the routing strategies actually diverge. With a single
+#    deployment per model every strategy trivially picks the same one and
+#    proves nothing.
+#
+# Both rely on scripts/fake_upstream.py, so no API keys and no network access
+# are required:
+#
+#   uv run python scripts/fake_upstream.py --port 4100
+
+model_list:
+  # ------------------------------------------------------- failover fixture
+  # priority is lowest-number-wins, so this broken deployment is tried first.
+  - model_name: eval-chat
+    params:
+      provider: openai
+      model: gpt-4o-mini
+      api_key: ${OPENAI_API_KEY:-sk-fake}
+      base_url: http://127.0.0.1:4199
+    priority: 0
+    capabilities:
+      tools: true
+      json_mode: true
+      max_context_tokens: 128000
+      max_output_tokens: 16384
+    pricing:
+      input_per_mtok: 0.15
+      output_per_mtok: 0.60
+    tags: [broken, primary]
+
+  - model_name: eval-chat
+    params:
+      provider: openai
+      model: gpt-4o-mini
+      api_key: ${OPENAI_API_KEY:-sk-fake}
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}
+    priority: 10
+    capabilities:
+      tools: true
+      json_mode: true
+      max_context_tokens: 128000
+      max_output_tokens: 16384
+    pricing:
+      input_per_mtok: 0.15
+      output_per_mtok: 0.60
+    tags: [healthy, fallback]
+
+  # -------------------------------------------------------- routing fixture
+  # Two healthy deployments that differ on every axis the router considers.
+  - model_name: eval-router
+    params:
+      provider: openai
+      model: gpt-4o
+      api_key: ${OPENAI_API_KEY:-sk-fake}
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}
+    priority: 0
+    weight: 1
+    capabilities:
+      tools: true
+      json_mode: true
+      max_context_tokens: 128000
+      max_output_tokens: 16384
+    pricing:
+      input_per_mtok: 2.50
+      output_per_mtok: 10.00
+    tags: [expensive, frontier]
+
+  - model_name: eval-router
+    params:
+      provider: openai
+      model: gpt-4o-mini
+      api_key: ${OPENAI_API_KEY:-sk-fake}
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}
+    priority: 20
+    weight: 9
+    capabilities:
+      tools: true
+      json_mode: true
+      max_context_tokens: 128000
+      max_output_tokens: 16384
+    pricing:
+      input_per_mtok: 0.15
+      output_per_mtok: 0.60
+    tags: [cheap, fast]
+
+  # --------------------------------------------------- cache embedding model
+  - model_name: text-embedding-3-small
+    params:
+      provider: openai
+      model: text-embedding-3-small
+      api_key: ${OPENAI_API_KEY:-sk-fake}
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}
+    capabilities:
+      embeddings: true
+    pricing:
+      input_per_mtok: 0.02
+      output_per_mtok: 0.0
+    tags: [embedding]
