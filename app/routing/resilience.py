@@ -14,6 +14,7 @@ abort immediately: retrying them only wastes money and latency.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import random
 import time
 from collections.abc import AsyncIterator
@@ -202,6 +203,14 @@ class ResilientExecutor:
         ctx.fallback_used = True
         reason = error.code.value if error else ErrorCode.PROVIDER_ERROR.value
         metrics.record_fallback(previous.provider, nxt.provider, reason)
+        # The request log, cost, and console must name the deployment that is
+        # actually serving the request, not the one the router picked first.
+        if ctx.routing is not None:
+            ctx.routing = dataclasses.replace(
+                ctx.routing,
+                deployment=nxt,
+                reason=f"fallback from {previous.id} after {reason}",
+            )
 
     def _exhausted(
         self, ctx: RequestContext, last_error: GatewayError | None

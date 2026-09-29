@@ -1,0 +1,29 @@
+# Throwaway datastores for the integration and E2E suites.
+#
+#   docker compose -f tests/integration/docker-compose.test.yaml up -d --wait
+#
+# Ports are offset from the development stack (deploy/docker/compose.yaml) so
+# both can run side by side, and data lives on tmpfs so every run starts clean.
+name: aigateway-test
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: aigateway_test
+      POSTGRES_USER: aigateway
+      POSTGRES_PASSWORD: aigateway
+    ports: ["55432:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U aigateway -d aigateway_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis/redis-stack-server:latest
+    ports: ["56379:6379"]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 3s
+      retries: 30

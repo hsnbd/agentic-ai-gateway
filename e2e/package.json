@@ -1,0 +1,24 @@
+{
+  "name": "aigateway-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cucumber + Playwright end-to-end scenarios for the Agentic AI Gateway",
+  "type": "commonjs",
+  "scripts": {
+    "stack:up": "docker compose -f docker-compose.e2e.yaml up -d --build --wait",
+    "stack:down": "docker compose -f docker-compose.e2e.yaml down -v",
+    "test": "cucumber-js --profile all",
+    "test:api": "cucumber-js --profile api",
+    "test:ui": "cucumber-js --profile ui",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "@cucumber/cucumber": "^13.2.1",
+    "@types/node": "^26.6.3",
+    "openai": "^7.23.0",
+    "playwright": "^1.63.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

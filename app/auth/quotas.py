@@ -78,28 +78,39 @@ class QuotaService:
     async def record_spend(
         self, key_id: str, team_id: str | None, amount_usd: Decimal | float
     ) -> None:
+        """Charge the database, then mirror the new totals into Redis.
+
+        The database is authoritative. Writing its post-update value to Redis
+        (rather than incrementing a counter that may have been lost in a Redis
+        restart and restarted from zero) keeps the fast-path check honest.
+        """
         amount = Decimal(str(amount_usd))
-        if self.redis is not None:
+        totals: dict[str, Decimal] = {}
+        async with self.db.session() as session:
+            key_total = await session.scalar(
+                update(VirtualKey)
+                .where(VirtualKey.id == key_id)
+                .values(spend_usd=VirtualKey.spend_usd + amount)
+                .returning(VirtualKey.spend_usd)
+            )
+            if key_total is not None:
+                totals[f"aigw:spend:key:{key_id}"] = Decimal(str(key_total))
+            if team_id is not None:
+                team_total = await session.scalar(
+                    update(Team)
+                    .where(Team.id == team_id)
+                    .values(spend_usd=Team.spend_usd + amount)
+                    .returning(Team.spend_usd)
+                )
+                if team_total is not None:
+                    totals[f"aigw:spend:team:{team_id}"] = Decimal(str(team_total))
+        if self.redis is not None and totals:
             try:
-                await self.redis.incrbyfloat(f"aigw:spend:key:{key_id}", float(amount))
-                if team_id is not None:
-                    await self.redis.incrbyfloat(f"aigw:spend:team:{team_id}", float(amount))
+                await self.redis.mset({name: str(value) for name, value in totals.items()})
             except Exception:
                 logger.warning(
                     "Spend counter update failed; database remains authoritative",
                     exc_info=True,
-                )
-        async with self.db.session() as session:
-            await session.execute(
-                update(VirtualKey)
-                .where(VirtualKey.id == key_id)
-                .values(spend_usd=VirtualKey.spend_usd + amount)
-            )
-            if team_id is not None:
-                await session.execute(
-                    update(Team)
-                    .where(Team.id == team_id)
-                    .values(spend_usd=Team.spend_usd + amount)
                 )
 
     async def reset_if_due(self, key: ResolvedKey) -> None:

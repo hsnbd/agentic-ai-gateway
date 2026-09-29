@@ -1,0 +1,88 @@
+# The full gateway stack for the Cucumber E2E suite.
+#
+#   docker compose -f e2e/docker-compose.e2e.yaml up -d --build --wait
+#
+# Everything is real except the LLM and MCP servers, which are the
+# deterministic fakes in scripts/: the gateway image (built from the repo's
+# Dockerfile, console included) talks to real Postgres and Redis Stack.
+name: aigateway-e2e
+
+x-image: &image
+  image: aigateway:e2e
+  build: {context: .., dockerfile: Dockerfile}
+
+x-tools: &tools
+  <<: *image
+  volumes: ["../scripts:/app/scripts:ro"]
+  entrypoint: ["python"]
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: aigateway
+      POSTGRES_USER: aigateway
+      POSTGRES_PASSWORD: aigateway
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U aigateway -d aigateway"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis/redis-stack-server:latest
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  fake-upstream:
+    <<: *tools
+    command: ["scripts/fake_upstream.py", "--host", "0.0.0.0", "--port", "4100"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4100/models')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  fake-mcp:
+    <<: *tools
+    command: ["scripts/fake_mcp_server.py", "--host", "0.0.0.0", "--port", "4200"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4200/healthz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  gateway:
+    <<: *image
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      fake-upstream: {condition: service_healthy}
+      fake-mcp: {condition: service_healthy}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aigateway:aigateway@postgres:5432/aigateway
+      REDIS_URL: redis://redis:6379/0
+      MODELS_CONFIG_PATH: config/models.eval.yaml
+      EVAL_UPSTREAM_URL: http://fake-upstream:4100
+      MASTER_KEY: sk-e2e-master-key
+      JWT_SECRET: e2e-jwt-secret-that-is-long-enough-for-hs256
+      BOOTSTRAP_ADMIN_EMAIL: admin@e2e.test
+      BOOTSTRAP_ADMIN_PASSWORD: e2e-admin-password
+      CACHE_ENABLED: "true"
+      CACHE_EMBEDDING_MODEL: text-embedding-3-small
+      CACHE_EMBEDDING_DIMENSIONS: "256"
+      RAG_EMBEDDING_MODEL: text-embedding-3-small
+      RAG_EMBEDDING_DIMENSIONS: "256"
+      RETRY_BASE_DELAY_SECONDS: "0.05"
+      RETRY_MAX_DELAY_SECONDS: "0.2"
+      LOG_FORMAT: console
+    ports: ["${E2E_GATEWAY_PORT:-18000}:8000"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 60

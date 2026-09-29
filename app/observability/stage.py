@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from app.accounting.pricing import PriceTable
 from app.accounting.usage import UsageService
@@ -47,6 +47,7 @@ class ObservabilityStage:
         )
         try:
             await service.record(ctx, response)
+            await _charge_spend(ctx, response.cost_usd or 0.0)
             duration = response.latency_ms or ctx.elapsed_ms()
             if getattr(ctx.state.settings, "metrics_enabled", True):
                 metrics.record_request(
@@ -61,17 +62,11 @@ class ObservabilityStage:
                 )
                 key_id = ctx.key_id or getattr(ctx.virtual_key, "id", None)
                 metrics.record_cost(response.model, provider, key_id, response.cost_usd or 0.0)
-                cache_enabled = getattr(ctx.state.settings, "cache_enabled", True)
-                cache_result: Literal["hit", "miss", "skip"] = (
-                    "skip"
-                    if ctx.request.no_cache or not cache_enabled
-                    else "hit"
-                    if ctx.cache_hit
-                    else "miss"
-                )
-                metrics.record_cache(cache_result, ctx.cost_saved_usd)
-                if ctx.time_to_first_token_ms is not None:
-                    metrics.record_ttft(response.model, provider, ctx.time_to_first_token_ms / 1000)
+                # Only count lookups the cache stage actually performed. Retries,
+                # fallbacks, and time-to-first-token are recorded by the
+                # executor where they happen, so they are not repeated here.
+                if ctx.cache_result is not None:
+                    metrics.record_cache(ctx.cache_result, ctx.cost_saved_usd)
                 if status == "error":
                     error = (
                         ctx.errors[-1]
@@ -79,11 +74,6 @@ class ObservabilityStage:
                         else RuntimeError("response finish reason error")
                     )
                     metrics.record_error(response.model, provider, _error_code(error))
-                for error in ctx.errors:
-                    metrics.record_retry(provider, _error_code(error))
-                if ctx.fallback_used:
-                    reason = _error_code(ctx.errors[-1]) if ctx.errors else "fallback"
-                    metrics.record_fallback("unknown", provider, reason)
                 if ctx.guardrail_flagged:
                     metrics.record_guardrail(
                         ctx.request.guardrail_policy or "default", "request", "flagged"
@@ -108,6 +98,42 @@ class ObservabilityStage:
         finally:
             reset_request_context(context_tokens)
         return response
+
+    async def on_failure(self, ctx: RequestContext, error: Exception) -> None:
+        """Log and meter a request that never produced a response."""
+        service = self._usage_service(ctx)
+        await service.record_error(ctx, error)
+        deployment = ctx.routing.deployment if ctx.routing is not None else None
+        provider = deployment.provider if deployment is not None else "unknown"
+        if getattr(ctx.state.settings, "metrics_enabled", True):
+            metrics.record_request(
+                ctx.model, provider, "error", ctx.dialect, ctx.elapsed_ms() / 1000
+            )
+            metrics.record_error(ctx.model, provider, _error_code(error))
+        logger.info(
+            "request failed",
+            request_id=ctx.request_id,
+            model=ctx.model,
+            provider=provider,
+            error_code=_error_code(error),
+            latency_ms=ctx.elapsed_ms(),
+            attempt_count=max(ctx.attempt_count, 1),
+        )
+
+
+async def _charge_spend(ctx: RequestContext, cost_usd: float) -> None:
+    """Charge a virtual key (and its team) so budgets are enforceable."""
+    key_id = ctx.key_id
+    if key_id is None or key_id == "master" or cost_usd <= 0:
+        return
+    from app.auth.quotas import QuotaService
+
+    try:
+        await QuotaService(ctx.state.db, ctx.state.redis).record_spend(
+            key_id, ctx.team_id, cost_usd
+        )
+    except Exception:
+        logger.exception("could not record spend", request_id=ctx.request_id, key_id=key_id)
 
 
 def _error_code(error: Exception) -> str:

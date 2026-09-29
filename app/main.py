@@ -55,6 +55,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
+    from app.observability.logging import configure_logging
+    from app.observability.tracing import configure_tracing
+
+    # LOG_LEVEL / LOG_FORMAT and TRACING_ENABLED / OTLP_ENDPOINT only take
+    # effect through these; tracing must instrument the app before it serves.
+    configure_logging(settings)
+    configure_tracing(settings, app)
+
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -88,10 +96,13 @@ def _register_routers(app: FastAPI) -> None:
     from app.api.deps import require_gateway_principal
 
     guard = [Depends(require_gateway_principal)]
+    #: Labels of the routers actually mounted, for feature reporting.
+    app.state.mounted_routers = set()
     for module_path, label, authenticated in _ROUTER_MODULES:
         try:
             module = __import__(module_path, fromlist=["router"])
             app.include_router(module.router, dependencies=guard if authenticated else None)
+            app.state.mounted_routers.add(label)
         except (ImportError, AttributeError) as exc:
             logger.info("router %s unavailable (%s); skipping", label, exc)
 

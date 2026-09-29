@@ -1,4 +1,5 @@
 export interface Page<T> { items: T[]; total: number; limit: number; offset: number }
+export interface ProviderStatus { provider: string; configured: boolean; reachable: boolean; health_state: string }
 export interface AdminUser { id: string; email: string; full_name: string | null; role: 'admin' | 'viewer'; is_active: boolean; created_at: string }
 export interface LoginResponse { access_token: string; token_type: 'bearer'; expires_in: number; user: AdminUser }
 export interface DashboardSummary {
@@ -12,7 +13,7 @@ export interface VirtualKey {
   id: string; key_prefix: string; name: string; team_id: string | null; max_budget_usd: number | null;
   spend_usd: number; budget_duration: string; rpm_limit: number | null; tpm_limit: number | null;
   max_parallel_requests: number | null; allowed_models: string[]; blocked_models: string[];
-  guardrail_policy: string | null; allowed_routes: string[]; is_active: boolean; expires_at: string | null;
+  guardrail_policy: string | null; allowed_routes: string[]; enabled: boolean; expires_at: string | null;
   last_used_at: string | null; metadata: Record<string, unknown>; created_at: string; updated_at: string; key?: string | null;
 }
 export interface Model { name: string; capabilities: Record<string, unknown>; pricing: Record<string, number | null>; deployments: string[] }
@@ -33,7 +34,7 @@ export interface KeyCreateRequest {
   name: string; team_id?: string | null; max_budget_usd?: number | null; budget_duration?: string;
   rpm_limit?: number | null; tpm_limit?: number | null; max_parallel_requests?: number | null;
   allowed_models?: string[]; blocked_models?: string[]; guardrail_policy?: string | null;
-  allowed_routes?: string[]; expires_at?: string | null; is_active?: boolean; metadata?: Record<string, unknown>;
+  allowed_routes?: string[]; expires_at?: string | null; enabled?: boolean; metadata?: Record<string, unknown>;
 }
 export interface Team {
   id: string; name: string; description: string | null; max_budget_usd: number | null; spend_usd: number;
@@ -46,6 +47,7 @@ export interface Deployment {
   id: string; model: string; provider: string; provider_model: string; enabled: boolean;
   capabilities: Record<string, unknown>; pricing: Record<string, number | null>; health_state: string;
   consecutive_failures: number; failure_rate: number; ewma_latency_ms: number;
+  priority: number; weight: number; tags: string[];
 }
 export interface RequestLogDetail extends RequestLog {
   routing_strategy: string | null; guardrail_results: Record<string, unknown>;

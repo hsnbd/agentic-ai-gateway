@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -223,13 +225,13 @@ async def embeddings(request: Request) -> Any:
     items = raw if isinstance(raw, list) else [raw]
 
     def vector(text: Any) -> list[float]:
-        # A stable hash-based pseudo-embedding: identical text embeds
-        # identically, which is exactly what the semantic cache relies on.
-        text = str(text)
+        # A stable bag-of-words pseudo-embedding: identical text embeds
+        # identically (what the semantic cache relies on), and texts sharing
+        # words land close together (what RAG retrieval relies on).
         dims = 256
         out = [0.0] * dims
-        for index, char in enumerate(text):
-            out[(index * 31 + ord(char)) % dims] += 1.0
+        for word in re.findall(r"[a-z0-9]+", str(text).lower()):
+            out[int(hashlib.sha256(word.encode()).hexdigest(), 16) % dims] += 1.0
         norm = sum(value * value for value in out) ** 0.5 or 1.0
         return [value / norm for value in out]
 

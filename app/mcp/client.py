@@ -36,6 +36,10 @@ class McpClient(httpx.AsyncClient):
             timeout=timeout,
             transport=transport,
         )
+        # Post to the configured URL verbatim. httpx normalises a base_url to
+        # end in "/", so posting "" to base_url "http://host/mcp" would hit
+        # "/mcp/", which MCP servers mounted at "/mcp" redirect or reject.
+        self._endpoint = base_url or ""
         self._request_ids = itertools.count(1)
         self._id_lock = asyncio.Lock()
         self._stdio_lock = asyncio.Lock()
@@ -188,9 +192,9 @@ class McpClient(httpx.AsyncClient):
             )
         try:
             if request_timeout is None:
-                response = await self.post("", json=payload)
+                response = await self.post(self._endpoint, json=payload)
             else:
-                response = await self.post("", json=payload, timeout=request_timeout)
+                response = await self.post(self._endpoint, json=payload, timeout=request_timeout)
         except httpx.TimeoutException as exc:
             raise GatewayError(
                 ErrorCode.PROVIDER_TIMEOUT,

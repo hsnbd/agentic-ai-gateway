@@ -47,7 +47,18 @@ class UsageService:
     async def record(self, ctx: RequestContext, response: ChatResponse) -> None:
         provider = self._provider(ctx, response)
         deployment = self._deployment(ctx)
-        cost = self.price_table.estimate_cost(response.model, provider, response.usage, deployment)
+        if ctx.cache_hit:
+            # A cache hit calls no provider: it is free, and what the original
+            # request cost is recorded as saved instead.
+            if not ctx.cost_saved_usd:
+                ctx.cost_saved_usd = response.cost_usd or self.price_table.estimate_cost(
+                    response.model, provider, response.usage, deployment
+                )
+            cost = 0.0
+        else:
+            cost = self.price_table.estimate_cost(
+                response.model, provider, response.usage, deployment
+            )
         response.cost_usd = cost
         ctx.cost_usd = cost
         failed = any(choice.finish_reason == FinishReason.ERROR for choice in response.choices)

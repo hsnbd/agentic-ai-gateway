@@ -4,9 +4,10 @@ import json
 from datetime import datetime
 from typing import Any, Literal, NoReturn
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, model_validator
 
+from app.api.deps import require_gateway_admin, require_gateway_writer
 from app.core.errors import GatewayError, InvalidRequestError
 from app.core.schemas import Message, ToolCall, ToolDef
 from app.db.models import McpServer
@@ -14,6 +15,11 @@ from app.mcp.registry import McpRegistry
 from app.tools.executor import ToolExecutor
 
 router = APIRouter(tags=["mcp"])
+
+#: Registering or changing MCP servers can launch host processes (stdio
+#: transport), so it is reserved for operators. Calling tools is data-plane.
+_ADMIN = [Depends(require_gateway_admin)]
+_WRITE = [Depends(require_gateway_writer)]
 
 
 class McpServerCreate(BaseModel):
@@ -145,7 +151,9 @@ async def list_servers(request: Request) -> list[McpServerResponse]:
     return [McpServerResponse.from_server(row) for row in rows]
 
 
-@router.post("/v1/mcp/servers", response_model=McpServerResponse, status_code=201)
+@router.post(
+    "/v1/mcp/servers", dependencies=_ADMIN, response_model=McpServerResponse, status_code=201
+)
 async def create_server(payload: McpServerCreate, request: Request) -> McpServerResponse:
     registry = _registry(request)
     try:
@@ -175,7 +183,7 @@ async def get_server(server_id: str, request: Request) -> McpServerResponse:
     return McpServerResponse.from_server(row)
 
 
-@router.patch("/v1/mcp/servers/{server_id}", response_model=McpServerResponse)
+@router.patch("/v1/mcp/servers/{server_id}", dependencies=_ADMIN, response_model=McpServerResponse)
 async def update_server(
     server_id: str, payload: McpServerUpdate, request: Request
 ) -> McpServerResponse:
@@ -192,7 +200,7 @@ async def update_server(
     return McpServerResponse.from_server(row)
 
 
-@router.delete("/v1/mcp/servers/{server_id}", status_code=204)
+@router.delete("/v1/mcp/servers/{server_id}", dependencies=_ADMIN, status_code=204)
 async def delete_server(server_id: str, request: Request) -> Response:
     try:
         await _registry(request).remove_server(server_id)
@@ -201,7 +209,9 @@ async def delete_server(server_id: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
-@router.post("/v1/mcp/servers/{server_id}/refresh", response_model=McpRefreshResponse)
+@router.post(
+    "/v1/mcp/servers/{server_id}/refresh", dependencies=_ADMIN, response_model=McpRefreshResponse
+)
 async def refresh_server(server_id: str, request: Request) -> McpRefreshResponse:
     try:
         registry = _registry(request)
@@ -231,7 +241,7 @@ async def list_tools(
         _raise_http(exc)
 
 
-@router.post("/v1/mcp/tools/call", response_model=McpToolCallResponse)
+@router.post("/v1/mcp/tools/call", dependencies=_WRITE, response_model=McpToolCallResponse)
 async def call_tool(payload: McpToolCallRequest, request: Request) -> McpToolCallResponse:
     call = ToolCall(name=payload.name, arguments=json.dumps(payload.arguments))
     message = await ToolExecutor(_registry(request)).execute(call)

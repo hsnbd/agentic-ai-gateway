@@ -129,7 +129,20 @@ def _build_cache(state: GatewayState) -> tuple[Stage | None, PostStage | None]:
         return None, None
 
     state.components["cache"] = cache
-    return SemanticCacheStage(cache), CacheWriteStage(cache)
+    return SemanticCacheStage(cache), CacheWriteStage(cache, _price_table(state))
+
+
+def _price_table(state: GatewayState) -> Any:
+    """Load the price table once; stages that price responses share it."""
+    if "prices" not in state.components:
+        from app.accounting.pricing import PriceTable
+
+        try:
+            state.components["prices"] = PriceTable(state.settings.pricing_config_path)
+        except Exception as exc:
+            logger.warning("pricing_unavailable", reason=str(exc))
+            return None
+    return state.components["prices"]
 
 
 def _build_observability(state: GatewayState) -> PostStage | None:
@@ -144,7 +157,7 @@ def _build_observability(state: GatewayState) -> PostStage | None:
         from app.accounting.pricing import PriceTable
         from app.accounting.usage import UsageService
 
-        prices = PriceTable(state.settings.pricing_config_path)
+        prices = _price_table(state) or PriceTable(state.settings.pricing_config_path)
         usage = UsageService(state.db, state.redis, prices)
     except Exception as exc:
         # Still record metrics; just lose per-request cost rows.
@@ -172,7 +185,8 @@ def _build_executor(state: GatewayState) -> Any:
         default_strategy=settings.routing_strategy,
     )
     policy = RetryPolicy(
-        max_attempts=settings.max_retries,
+        # MAX_RETRIES counts retries after the first attempt, per deployment.
+        max_attempts=settings.max_retries + 1,
         initial_backoff=settings.retry_base_delay_seconds,
         max_backoff=settings.retry_max_delay_seconds,
     )

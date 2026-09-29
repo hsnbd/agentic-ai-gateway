@@ -12,9 +12,42 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - run: uv sync --locked --extra dev
-      - run: uv run ruff check app
+      - run: uv run ruff check app tests scripts/fake_mcp_server.py
       - run: uv run mypy app
       - run: uv run pytest tests/unit
+
+  integration:
+    # The real app against real Postgres and Redis Stack (vector search).
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: aigateway_test
+          POSTGRES_USER: aigateway
+          POSTGRES_PASSWORD: aigateway
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aigateway -d aigateway_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis/redis-stack-server:latest
+        ports: ['56379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      AIGW_TEST_DATABASE_URL: postgresql+asyncpg://aigateway:aigateway@localhost:55432/aigateway_test
+      AIGW_TEST_REDIS_URL: redis://localhost:56379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: uv sync --locked --extra dev
+      - run: uv run pytest tests/integration
+
   ui:
     runs-on: ubuntu-latest
     defaults: {run: {working-directory: ui}}
@@ -24,7 +57,42 @@ jobs:
         with: {node-version: '22', cache: npm, cache-dependency-path: ui/package-lock.json}
       - run: npm ci
       - run: npx tsc --noEmit
+      - run: npm run lint
       - run: npm run build
+
+  e2e:
+    # Cucumber + Playwright against the dockerised stack: gateway image (with
+    # the console), Postgres, Redis Stack, and the fake LLM and MCP servers.
+    runs-on: ubuntu-latest
+    needs: [python, ui]
+    defaults: {run: {working-directory: e2e}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm, cache-dependency-path: e2e/package-lock.json}
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx tsc --noEmit
+      - run: docker compose -f docker-compose.e2e.yaml up -d --build --wait
+      - run: npm test
+      - if: failure()
+        run: docker compose -f docker-compose.e2e.yaml logs --no-color gateway > reports/gateway.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cucumber-report
+          path: e2e/reports/
+      - if: always()
+        run: docker compose -f docker-compose.e2e.yaml down -v
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/aigateway
+      - run: helm template aigateway deploy/helm/aigateway > /dev/null
+
   docker:
     runs-on: ubuntu-latest
     needs: [python, ui]

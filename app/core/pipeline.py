@@ -7,18 +7,31 @@ Stages are deliberately unaware of provider specifics.
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from app.core.schemas import ChatRequest, ChatResponse, StreamChunk
+from app.core.schemas import (
+    ChatRequest,
+    ChatResponse,
+    Choice,
+    FinishReason,
+    Message,
+    Role,
+    StreamChunk,
+    ToolCall,
+    Usage,
+)
 
 if TYPE_CHECKING:
     from app.core.state import GatewayState
     from app.db.models import VirtualKey
     from app.providers.base import Deployment
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,6 +74,8 @@ class RequestContext:
     cache_hit: bool = False
     cache_similarity: float | None = None
     cache_key: str | None = None
+    #: "hit" / "miss" / "skip", set by the cache stage; None when no cache ran.
+    cache_result: str | None = None
     cost_saved_usd: float = 0.0
 
     # Guardrails
@@ -114,6 +129,13 @@ class PostStage(Protocol):
     async def finalize(self, ctx: RequestContext, response: ChatResponse) -> ChatResponse: ...
 
 
+@runtime_checkable
+class FailureObserver(Protocol):
+    """A post-stage that also wants to hear about requests that failed."""
+
+    async def on_failure(self, ctx: RequestContext, error: Exception) -> None: ...
+
+
 class Pipeline:
     """Orchestrates pre-stages, execution, and post-stages."""
 
@@ -128,17 +150,14 @@ class Pipeline:
         self.post_stages = post_stages
 
     async def run(self, ctx: RequestContext) -> ChatResponse:
-        short_circuit: ChatResponse | None = None
+        try:
+            return await self._run(ctx)
+        except Exception as exc:
+            await self._notify_failure(ctx, exc)
+            raise
 
-        for stage in self.pre_stages:
-            started = time.perf_counter()
-            try:
-                result = await stage.process(ctx)
-            finally:
-                ctx.record_stage(stage.name, started)
-            if result is not None:
-                short_circuit = result
-                break
+    async def _run(self, ctx: RequestContext) -> ChatResponse:
+        short_circuit = await self._run_pre_stages(ctx)
 
         if short_circuit is not None:
             response = short_circuit
@@ -156,12 +175,7 @@ class Pipeline:
             finally:
                 ctx.record_stage(post.name, started)
 
-        response.latency_ms = ctx.elapsed_ms()
-        response.attempt_count = max(ctx.attempt_count, 1)
-        response.fallback_used = ctx.fallback_used
-        response.cache_hit = ctx.cache_hit
-        response.cache_similarity = ctx.cache_similarity
-        ctx.response = response
+        self._annotate(ctx, response)
         return response
 
     async def run_stream(self, ctx: RequestContext) -> AsyncIterator[StreamChunk]:
@@ -169,8 +183,39 @@ class Pipeline:
 
         Pre-stages still run (auth, guardrails, cache). A cache hit is replayed
         as a synthetic stream. Otherwise chunks are forwarded as they arrive
-        while being accumulated so post-stages can act on the complete text.
+        while being accumulated, so that once the stream completes the
+        post-stages (output guardrails, cache write, accounting) see the whole
+        response exactly as they would for a unary request.
+
+        Bytes already sent cannot be recalled, so post-stage failures here are
+        logged rather than raised: an output guardrail can flag and record a
+        violation, but cannot un-send the text.
         """
+        try:
+            short_circuit = await self._run_pre_stages(ctx)
+            if short_circuit is not None:
+                async for chunk in _replay_as_stream(short_circuit):
+                    yield chunk
+                await self._finalize_stream(ctx, short_circuit)
+                return
+
+            accumulator = _StreamAccumulator(ctx.request.model)
+            started = time.perf_counter()
+            try:
+                async for chunk in self.executor.execute_stream(ctx):
+                    if ctx.time_to_first_token_ms is None and chunk.content:
+                        ctx.time_to_first_token_ms = ctx.elapsed_ms()
+                    accumulator.add(chunk)
+                    yield chunk
+            finally:
+                ctx.record_stage("execute", started)
+        except Exception as exc:
+            await self._notify_failure(ctx, exc)
+            raise
+
+        await self._finalize_stream(ctx, accumulator.response())
+
+    async def _run_pre_stages(self, ctx: RequestContext) -> ChatResponse | None:
         for stage in self.pre_stages:
             started = time.perf_counter()
             try:
@@ -178,14 +223,98 @@ class Pipeline:
             finally:
                 ctx.record_stage(stage.name, started)
             if result is not None:
-                async for chunk in _replay_as_stream(result):
-                    yield chunk
-                return
+                return result
+        return None
 
-        async for chunk in self.executor.execute_stream(ctx):
-            if ctx.time_to_first_token_ms is None and chunk.content:
-                ctx.time_to_first_token_ms = ctx.elapsed_ms()
-            yield chunk
+    async def _finalize_stream(self, ctx: RequestContext, response: ChatResponse) -> None:
+        for post in self.post_stages:
+            started = time.perf_counter()
+            try:
+                response = await post.finalize(ctx, response)
+            except Exception:
+                logger.warning(
+                    "post-stage %s failed after stream completed", post.name, exc_info=True
+                )
+            finally:
+                ctx.record_stage(post.name, started)
+        self._annotate(ctx, response)
+
+    async def _notify_failure(self, ctx: RequestContext, error: Exception) -> None:
+        # Unauthenticated traffic is not the caller's usage: logging it would
+        # let anyone fill the request log without a key.
+        if ctx.key_id is None:
+            return
+        for post in self.post_stages:
+            if isinstance(post, FailureObserver):
+                try:
+                    await post.on_failure(ctx, error)
+                except Exception:
+                    logger.warning("failure hook %s raised", post.name, exc_info=True)
+
+    @staticmethod
+    def _annotate(ctx: RequestContext, response: ChatResponse) -> None:
+        response.latency_ms = ctx.elapsed_ms()
+        response.attempt_count = max(ctx.attempt_count, 1)
+        response.fallback_used = ctx.fallback_used
+        response.cache_hit = ctx.cache_hit
+        response.cache_similarity = ctx.cache_similarity
+        ctx.response = response
+
+
+class _StreamAccumulator:
+    """Rebuilds a complete ChatResponse from the chunks of a stream."""
+
+    def __init__(self, model: str) -> None:
+        self.model = model
+        self.response_id: str | None = None
+        self.provider: str | None = None
+        self.deployment_id: str | None = None
+        self.parts: list[str] = []
+        self.tool_calls: dict[int, dict[str, str]] = {}
+        self.finish_reason: FinishReason | None = None
+        self.usage: Usage | None = None
+
+    def add(self, chunk: StreamChunk) -> None:
+        self.response_id = self.response_id or chunk.id
+        self.model = chunk.model or self.model
+        self.provider = chunk.provider or self.provider
+        self.deployment_id = chunk.deployment_id or self.deployment_id
+        if chunk.content:
+            self.parts.append(chunk.content)
+        for delta in chunk.tool_calls:
+            call = self.tool_calls.setdefault(delta.index, {"id": "", "name": "", "arguments": ""})
+            call["id"] = delta.id or call["id"]
+            call["name"] = delta.name or call["name"]
+            call["arguments"] += delta.arguments or ""
+        if chunk.finish_reason is not None:
+            self.finish_reason = chunk.finish_reason
+        if chunk.usage is not None:
+            self.usage = chunk.usage
+
+    def response(self) -> ChatResponse:
+        tool_calls = [
+            ToolCall(
+                id=call["id"] or f"call_{index}",
+                name=call["name"],
+                arguments=call["arguments"] or "{}",
+            )
+            for index, call in sorted(self.tool_calls.items())
+        ]
+        message = Message(role=Role.ASSISTANT, content="".join(self.parts), tool_calls=tool_calls)
+        response = ChatResponse(
+            model=self.model,
+            choices=[
+                Choice(
+                    index=0, message=message, finish_reason=self.finish_reason or FinishReason.STOP
+                )
+            ],
+            usage=self.usage or Usage(),
+            provider=self.provider,
+            deployment_id=self.deployment_id,
+        )
+        if self.response_id:
+            response.id = self.response_id
+        return response
 
 
 @runtime_checkable
@@ -199,8 +328,6 @@ class Executor(Protocol):
 
 async def _replay_as_stream(response: ChatResponse) -> AsyncIterator[StreamChunk]:
     """Render a complete response as a minimal two-chunk stream."""
-    from app.core.schemas import Role
-
     choice = response.choices[0] if response.choices else None
     yield StreamChunk(
         id=response.id,

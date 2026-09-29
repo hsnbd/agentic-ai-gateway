@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
+from app.api.deps import CurrentPrincipal, require_gateway_writer
 from app.core.errors import InvalidRequestError, NotFoundError
 from app.core.pipeline import RequestContext
 from app.core.schemas import ChatRequest, ChatResponse
@@ -19,6 +20,9 @@ from app.rag.retrieve import RetrievedChunk, augment_request, build_context
 from app.rag.service import DEFAULT_CHUNK_PAGE_SIZE, MAX_CHUNK_PAGE_SIZE, RagService
 
 router = APIRouter()
+
+#: Mutating and billable routes: console viewers are read-only.
+_WRITE = [Depends(require_gateway_writer)]
 
 #: Number of leading floats returned in an embedding preview.
 EMBEDDING_PREVIEW_VALUES = 8
@@ -202,6 +206,7 @@ def _chunk_response(chunks: list[RetrievedChunk]) -> list[RetrievedChunkResponse
 
 @router.post(
     "/v1/rag/collections",
+    dependencies=_WRITE,
     response_model=CollectionResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -233,7 +238,9 @@ async def get_collection(collection_id: str, request: Request) -> CollectionResp
     return CollectionResponse.model_validate(collection)
 
 
-@router.delete("/v1/rag/collections/{collection_id}", response_model=DeleteResponse)
+@router.delete(
+    "/v1/rag/collections/{collection_id}", dependencies=_WRITE, response_model=DeleteResponse
+)
 async def delete_collection(collection_id: str, request: Request) -> DeleteResponse:
     await _service(request).delete_collection(collection_id)
     return DeleteResponse(deleted=True)
@@ -273,6 +280,7 @@ _DOCUMENT_REQUEST_BODY = {
 
 @router.post(
     "/v1/rag/collections/{collection_id}/documents",
+    dependencies=_WRITE,
     response_model=DocumentResponse,
     status_code=status.HTTP_201_CREATED,
     openapi_extra=_DOCUMENT_REQUEST_BODY,
@@ -329,6 +337,7 @@ async def list_documents(collection_id: str, request: Request) -> list[DocumentR
 
 @router.delete(
     "/v1/rag/collections/{collection_id}/documents",
+    dependencies=_WRITE,
     response_model=DeleteDocumentsResponse,
 )
 async def delete_documents(collection_id: str, request: Request) -> DeleteDocumentsResponse:
@@ -359,6 +368,7 @@ async def get_document(collection_id: str, document_id: str, request: Request) -
 
 @router.delete(
     "/v1/rag/collections/{collection_id}/documents/{document_id}",
+    dependencies=_WRITE,
     response_model=DeleteResponse,
 )
 async def delete_document_route(
@@ -422,8 +432,10 @@ async def search(payload: SearchRequest, request: Request) -> SearchResponse:
     return SearchResponse(collection_id=payload.collection_id, results=_chunk_response(chunks))
 
 
-@router.post("/v1/rag/query", response_model=RagQueryResponse)
-async def query(payload: RagQueryRequest, request: Request) -> RagQueryResponse:
+@router.post("/v1/rag/query", dependencies=_WRITE, response_model=RagQueryResponse)
+async def query(
+    payload: RagQueryRequest, request: Request, principal: CurrentPrincipal
+) -> RagQueryResponse:
     service = _service(request)
     query_text = payload.query or next(
         (item.text() for item in reversed(payload.request.messages) if item.role.value == "user"),
@@ -440,9 +452,14 @@ async def query(payload: RagQueryRequest, request: Request) -> RagQueryResponse:
     context = build_context(chunks, max_tokens=payload.max_context_tokens)
     chat_request = augment_request(payload.request, context, mode=payload.mode)
     state = _state(request)
-    pipeline = state.components.get("pipeline")
-    if pipeline is None:
-        raise RuntimeError("Chat pipeline is not configured on GatewayState")
+    pipeline = state.require_pipeline()
+    # Run as the caller so their key's budget, limits, and model allowlist
+    # apply. Console admins have no key of their own; like the playground,
+    # they run with the master key.
+    credential = principal.credential or state.settings.master_key.get_secret_value()
+    chat_request = chat_request.model_copy(
+        update={"stream": False, "metadata": {**chat_request.metadata, "api_key": credential}}
+    )
     ctx = RequestContext(request=chat_request, state=state, route="/v1/rag/query")
     response = await pipeline.run(ctx)
     return RagQueryResponse(response=response, sources=_chunk_response(chunks))

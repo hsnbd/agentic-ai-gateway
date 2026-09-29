@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import csv
 import io
+import json
 import logging
 import math
 import time
@@ -16,7 +17,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Literal
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -72,7 +73,7 @@ from app.auth.console import (
 )
 from app.auth.keys import generate_key, invalidate_cache
 from app.config.settings import get_settings
-from app.core.errors import ConfigurationError, NotFoundError
+from app.core.errors import ConfigurationError, GatewayError, NotFoundError
 from app.core.pipeline import RequestContext
 from app.core.schemas import ChatRequest, Message
 from app.core.state import GatewayState
@@ -1063,7 +1064,7 @@ async def list_models(
     return Page(items=items, total=total, limit=page.limit, offset=page.offset)
 
 
-@router.post("/deployments/{deployment_id}/health-check", response_model=HealthCheckResponse)
+@router.post("/deployments/{deployment_id:path}/health-check", response_model=HealthCheckResponse)
 async def deployment_health_check(
     deployment_id: str,
     state: Annotated[GatewayState, Depends(get_gateway_state)],
@@ -1678,6 +1679,7 @@ async def cache_invalidate(
 
 @router.get("/system/info", response_model=SystemInfoResponse)
 async def system_info(
+    request: Request,
     state: Annotated[GatewayState, Depends(get_gateway_state)],
     _: CurrentAdmin,
 ) -> SystemInfoResponse:
@@ -1692,11 +1694,14 @@ async def system_info(
         logger.warning("Redis health check failed", exc_info=True)
         redis_ok = False
     components = state.components
+    # RAG and MCP services are created lazily on first use, so whether their
+    # routers are mounted is what says the feature is available.
+    mounted: set[str] = getattr(request.app.state, "mounted_routers", set())
     features = {
         "cache": bool(state.settings.cache_enabled and components.get("cache")),
         "guardrails": bool(components.get("guardrails")),
-        "rag": bool(components.get("rag")),
-        "mcp": bool(components.get("mcp")),
+        "rag": "rag" in mounted and redis_ok,
+        "mcp": "mcp" in mounted,
         "observability": bool(state.settings.metrics_enabled),
     }
     return SystemInfoResponse(
@@ -1752,8 +1757,13 @@ async def playground_chat(
     if body.stream:
 
         async def events() -> AsyncIterator[str]:
-            async for chunk in pipeline.run_stream(ctx):
-                yield f"data: {chunk.model_dump_json()}\n\n"
+            try:
+                async for chunk in pipeline.run_stream(ctx):
+                    yield f"data: {chunk.model_dump_json()}\n\n"
+            except GatewayError as exc:
+                # Headers are already sent, so the failure has to travel in-band
+                # rather than as an HTTP status the client never sees.
+                yield f"event: error\ndata: {json.dumps(exc.to_dict())}\n\n"
             routing = None
             if ctx.routing is not None:
                 routing = {
@@ -1785,8 +1795,6 @@ async def playground_chat(
                 "token_usage": ctx.response.usage.model_dump() if ctx.response else None,
                 "estimated_cost_usd": ctx.response.cost_usd if ctx.response else None,
             }
-            import json
-
             yield f"event: metadata\ndata: {json.dumps(trailer)}\n\n"
             yield "data: [DONE]\n\n"
 

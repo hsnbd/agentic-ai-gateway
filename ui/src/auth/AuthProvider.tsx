@@ -36,7 +36,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const result = await apiRequest<LoginResponse>('/admin/api/auth/login', { method: 'POST', body: { email, password } });
     localStorage.setItem(TOKEN_KEY, result.access_token); setToken(result.access_token); setUser(toAuthUser(result.user)); setReady(true);
   }, []);
-  const value = useMemo(() => ({ token, user, ready, login, logout: clearSession }), [token, user, ready, login, clearSession]);
+  // Tell the server (for its audit trail and any future token revocation), but
+  // never let a failed call keep the user signed in locally.
+  const logout = useCallback(() => { if (token) void apiRequest('/admin/api/auth/logout', { method: 'POST' }).catch(() => undefined); clearSession(); }, [token, clearSession]);
+  const value = useMemo(() => ({ token, user, ready, login, logout }), [token, user, ready, login, logout]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 export function useAuth(): AuthValue { const value = useContext(AuthContext); if (!value) throw new Error('useAuth must be used inside AuthProvider'); return value; }

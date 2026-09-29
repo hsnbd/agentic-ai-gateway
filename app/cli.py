@@ -109,10 +109,13 @@ def _cmd_routes(args: argparse.Namespace) -> int:
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
+    from app.config.settings import get_settings
+
+    settings = get_settings()
     uvicorn.run(
         "app.main:app",
-        host=args.host,
-        port=args.port,
+        host=args.host or settings.host,
+        port=args.port or settings.port,
         reload=args.reload,
         factory=False,
     )
@@ -124,8 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve = sub.add_parser("serve", help="Run the gateway with uvicorn")
-    serve.add_argument("--host", default="0.0.0.0")  # nosec - container default
-    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--host", default=None, help="Defaults to HOST (0.0.0.0)")
+    serve.add_argument("--port", type=int, default=None, help="Defaults to PORT (4000)")
     serve.add_argument("--reload", action="store_true")
     serve.set_defaults(func=_cmd_serve, is_async=False)
 

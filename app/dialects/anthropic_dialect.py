@@ -460,7 +460,9 @@ class AnthropicDialect(Dialect):
 
     @staticmethod
     def _event(name: str, data: dict[str, Any]) -> str:
-        encoded = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+        # Anthropic repeats the event name as "type" inside every payload, and
+        # SDKs (notably the TypeScript one) dispatch on it, not the SSE line.
+        encoded = json.dumps({"type": name, **data}, separators=(",", ":"), ensure_ascii=False)
         return f"event: {name}\ndata: {encoded}\n\n"
 
     @staticmethod

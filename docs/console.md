@@ -65,7 +65,7 @@ better option in production because the password never has to sit in the
 environment of a long-running process:
 
 ```bash
-aigateway create-admin --email admin@example.com --role admin
+aigateway create-admin --email admin@example.com --password "$ADMIN_PASSWORD" --role admin
 ```
 
 ### Sessions
@@ -252,9 +252,14 @@ shows the underlying reason — an unreachable URL, a command that is not on
 Server configuration is echoed back with **environment values redacted**, so you
 can confirm which variables were set without exposing the secrets in them.
 
-Discovered tools become callable through the gateway's tool-calling layer, which
-means MCP traffic inherits the same logging, cost accounting, and guardrails as
-everything else.
+Discovered tools are callable through `POST /v1/mcp/tools/call`, with arguments
+validated against each tool's JSON schema. Tool calls do not yet go through the
+chat pipeline, so they are not request-logged, costed, or guardrailed (see
+[features.md](../features.md)).
+
+Registering, editing, or deleting a server requires the master key or a console
+admin, because a `stdio` server runs a command on the gateway host. Virtual
+keys and admins may call tools; viewers may only browse.
 
 ## Playground
 

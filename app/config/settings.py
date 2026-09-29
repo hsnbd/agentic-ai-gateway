@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     rag_default_top_k: int = 5
     rag_index_name: str = "aigw:rag:idx"
 
+    # --- MCP ---
+    mcp_timeout_seconds: float = 10.0
+    mcp_tool_cache_ttl_seconds: float = 300.0
+
     # --- Observability ---
     log_level: str = "INFO"
     log_format: Literal["json", "console"] = "json"

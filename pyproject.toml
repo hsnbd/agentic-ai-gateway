@@ -82,7 +82,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-q --strict-markers"
 markers = [
-    "integration: tests requiring Redis/Postgres",
+    "integration: tests requiring Postgres and Redis Stack (tests/integration/docker-compose.test.yaml)",
     "live: tests calling real provider APIs",
 ]
 

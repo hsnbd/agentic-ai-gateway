@@ -92,6 +92,8 @@ export default function RagCollections() {
   const queryClient = useQueryClient();
   const collectionsQuery = useRagCollections();
   const [selectedId, setSelectedId] = useState<string | undefined>();
+  // Declared before `collections` below reads it: the sort runs during render.
+  const [collectionSort, setCollectionSort] = useState<'newest' | 'oldest'>('newest');
   const collections = [...(collectionsQuery.data ?? [])].sort((a, b) => (collectionSort === 'newest' ? -1 : 1) * (Date.parse(a.created_at) - Date.parse(b.created_at)));
   const selected = collections.find((item) => item.id === selectedId) ?? collections[0];
   const documentsQuery = useRagDocuments(selected?.id);
@@ -105,7 +107,6 @@ export default function RagCollections() {
   const [retryError, setRetryError] = useState<string | null>(null);
   const [retryPending, setRetryPending] = useState(false);
   const [documentSort, setDocumentSort] = useState<'newest' | 'oldest'>('newest');
-  const [collectionSort, setCollectionSort] = useState<'newest' | 'oldest'>('newest');
   const [formError, setFormError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);

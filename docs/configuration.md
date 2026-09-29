@@ -13,7 +13,7 @@ Every environment variable maps to a field on `Settings` in
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ENVIRONMENT` | `development` | Environment label used in logs and traces |
+| `ENVIRONMENT` | `dev` | Environment label: `dev`, `staging`, or `prod` |
 | `DEBUG` | `false` | Verbose errors; never enable in production |
 | `HOST` | `0.0.0.0` | Bind address |
 | `PORT` | `4000` | Bind port |
@@ -63,6 +63,13 @@ laptop with only Ollama running is a valid deployment.
 | `ROUTING_STRATEGY` | `priority` | Default strategy; overridable per request |
 | `CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive failures before opening |
 | `CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `30.0` | Wait before a probe is admitted |
+
+### MCP
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_TIMEOUT_SECONDS` | `10.0` | Per-request timeout when talking to an MCP server |
+| `MCP_TOOL_CACHE_TTL_SECONDS` | `300.0` | How long discovered tool lists are reused |
 
 ### Cache
 

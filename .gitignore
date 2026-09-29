@@ -27,3 +27,6 @@ app/ui_static/*
 .vscode/
 .idea/
 .DS_Store
+
+# Local SQLite scratch databases
+*.db

@@ -280,9 +280,14 @@ async def _api_request(
     from fastapi import FastAPI
 
     import app.api.mcp as api
+    from app.api.deps import GatewayPrincipal, require_gateway_principal
 
     app = FastAPI()
     app.include_router(api.router)
+    # Authorization is covered by the integration suite; act as an operator.
+    app.dependency_overrides[require_gateway_principal] = lambda: GatewayPrincipal(
+        kind="master", identifier="master", role="admin"
+    )
     monkeypatch.setattr(api, "_registry", lambda request: registry)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

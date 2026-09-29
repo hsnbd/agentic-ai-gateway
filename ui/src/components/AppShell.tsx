@@ -28,9 +28,9 @@ const nav = [
   { label: 'Logs', path: '/logs', icon: ReceiptLongRounded },
   { label: 'Usage', path: '/usage', icon: InsightsRounded },
   { label: 'Guardrails', path: '/guardrails', icon: SecurityRounded },
-  { label: 'Cache', path: '/cache', icon: StorageRounded, admin: true },
-  { label: 'RAG', path: '/rag', icon: HubRounded, admin: true },
-  { label: 'MCP', path: '/mcp', icon: ExtensionRounded, admin: true },
+  { label: 'Cache', path: '/cache', icon: StorageRounded },
+  { label: 'RAG', path: '/rag', icon: HubRounded },
+  { label: 'MCP', path: '/mcp', icon: ExtensionRounded },
   { label: 'Playground', path: '/playground', icon: TerminalRounded, admin: true },
   { label: 'Settings', path: '/settings', icon: SettingsRounded, admin: true },
 ];

@@ -92,6 +92,25 @@ uv run python scripts/evaluate.py \
 
 It exits non-zero below `--min-success-rate`, so it doubles as a CI gate.
 
+## Testing
+
+Three suites, from fastest to most complete. [features.md](./features.md) maps
+every feature to the tests that cover it.
+
+| Suite | Command | Needs |
+|---|---|---|
+| Unit (`tests/unit`) | `make test-unit` | nothing |
+| Integration (`tests/integration`): the real app on real Postgres and Redis Stack, fake LLM providers | `make test-integration` | Docker |
+| End-to-end (`e2e/`): Cucumber scenarios through the official OpenAI/Anthropic SDKs and a real browser driving the console, against the dockerised stack | `make e2e-install` once, then `make e2e` | Docker, Node 22 |
+
+`make test-integration` starts throwaway datastores from
+`tests/integration/docker-compose.test.yaml` (ports 55432 and 56379); point the
+suite elsewhere with `AIGW_TEST_DATABASE_URL` and `AIGW_TEST_REDIS_URL`.
+`make e2e` builds the gateway image and starts it with the fake upstream
+(`scripts/fake_upstream.py`) and fake MCP server (`scripts/fake_mcp_server.py`)
+on port 18000; reports land in `e2e/reports/`. Stop the stacks with
+`make test-down` and `make e2e-down`.
+
 ## Documentation
 
 | Document | What it covers |

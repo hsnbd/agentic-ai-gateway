@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hmac
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, Query, Request
@@ -66,10 +66,18 @@ def require_role(role: str) -> Any:
 
 @dataclass(frozen=True)
 class GatewayPrincipal:
-    """Who is calling a data-plane route, and by which credential."""
+    """Who is calling a data-plane route, and by which credential.
+
+    ``role`` is ``admin`` for the master key and console admins, ``viewer`` for
+    read-only console users, and ``application`` for virtual keys.
+    """
 
     kind: str
     identifier: str
+    role: str = "application"
+    #: The raw credential, so routes that run the chat pipeline can charge the
+    #: caller's own key. Never logged or returned.
+    credential: str = field(default="", repr=False)
 
 
 async def require_gateway_principal(
@@ -90,11 +98,13 @@ async def require_gateway_principal(
         raise HTTPException(status_code=401, detail="An API key or console token is required")
 
     if hmac.compare_digest(raw, state.settings.master_key.get_secret_value()):
-        return GatewayPrincipal(kind="master", identifier="master")
+        return GatewayPrincipal(kind="master", identifier="master", role="admin", credential=raw)
 
     key = await KeyService(state.db, state.redis).lookup(raw)
     if key is not None and key.is_valid():
-        return GatewayPrincipal(kind="virtual_key", identifier=key.id)
+        return GatewayPrincipal(
+            kind="virtual_key", identifier=key.id, role="application", credential=raw
+        )
 
     try:
         claims = decode_token(raw, "access")
@@ -107,7 +117,27 @@ async def require_gateway_principal(
         user = await session.scalar(select(AdminUser).where(AdminUser.id == user_id))
         if user is None or not user.is_active:
             raise HTTPException(status_code=401, detail="Invalid or inactive console user")
-    return GatewayPrincipal(kind="console", identifier=user_id)
+        role = user.role
+    return GatewayPrincipal(kind="console", identifier=user_id, role=role)
+
+
+CurrentPrincipal = Annotated[GatewayPrincipal, Depends(require_gateway_principal)]
+
+
+async def require_gateway_writer(principal: CurrentPrincipal) -> GatewayPrincipal:
+    """Allow changes by applications and admins; console viewers are read-only."""
+    if principal.role == "viewer":
+        raise HTTPException(status_code=403, detail="Viewers cannot modify gateway resources")
+    return principal
+
+
+async def require_gateway_admin(principal: CurrentPrincipal) -> GatewayPrincipal:
+    """Operator-only routes, e.g. registering MCP servers that run host commands."""
+    if principal.role != "admin":
+        raise HTTPException(
+            status_code=403, detail="Only the master key or a console admin may do this"
+        )
+    return principal
 
 
 @dataclass(frozen=True)

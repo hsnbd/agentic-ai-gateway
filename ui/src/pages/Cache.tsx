@@ -51,6 +51,7 @@ export default function Cache() {
   }, [hits.data, requests.data]);
   const ratio = (value: CacheStats | undefined): string => value?.hits !== null && value?.hits !== undefined && value.misses !== null && value.misses !== undefined && value.hits + value.misses > 0
     ? `${formatNumber(value.hits / (value.hits + value.misses) * 100, 1)}%` : 'Not recorded';
+  const admin = user?.role === 'admin';
   const columns: GridColDef<CacheEntry>[] = [
     { field: 'key', headerName: 'Entry key', minWidth: 205, flex: 1, renderCell: ({ value }) => <Tooltip title={String(value)}><span>{String(value)}</span></Tooltip> },
     { field: 'model', headerName: 'Model', minWidth: 115, flex: 0.6, valueFormatter: (value) => value == null ? 'Not recorded' : String(value) },
@@ -61,7 +62,6 @@ export default function Cache() {
     { field: 'cached_prompt', headerName: 'Cached prompt (redacted)', minWidth: 170, flex: 1, renderCell: ({ value }) => value === null ? 'Not recorded' : <Tooltip title={String(value)}><span>{String(value)}</span></Tooltip> },
     { field: 'actions', headerName: 'Action', minWidth: 120, sortable: false, renderCell: ({ row }) => admin ? <Button size="small" color="error" onClick={() => { setSuccess(null); setConfirmation({ key: row.key }); }}>Invalidate</Button> : null },
   ];
-  const admin = user?.role === 'admin';
   const validNamespace = /^[a-f0-9]{64}$/.test(namespace.trim());
 
   return <>

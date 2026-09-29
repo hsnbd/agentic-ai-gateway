@@ -63,6 +63,8 @@ export async function streamChat(
     if (eventName === 'message' && data === '[DONE]') return true;
     let payload: unknown;
     try { payload = JSON.parse(data) as unknown; } catch { payload = data; }
+    // The gateway reports failures after the stream started as an `error` event.
+    if (eventName === 'error') throw new StreamHttpError(response.status, payload, response.headers);
     events.push(payload);
     if (eventName === 'message') text += contentFromPayload(payload);
     onEvent({ event: eventName, data: payload });
