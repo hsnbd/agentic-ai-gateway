@@ -108,3 +108,90 @@ model_list:
       input_per_mtok: 0.02
       output_per_mtok: 0.0
     tags: [embedding]
+
+  # ------------------------------------------------- native provider fixture
+  # The same fake upstream speaks each vendor's native API under its own
+  # prefix, so the Anthropic, Gemini, and Ollama adapters run their real
+  # request translation and response parsing end to end.
+  - model_name: eval-anthropic
+    params:
+      provider: anthropic
+      model: claude-sonnet-4-5
+      api_key: ${ANTHROPIC_API_KEY:-sk-ant-fake}
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}/anthropic
+    capabilities:
+      tools: true
+      max_context_tokens: 200000
+      max_output_tokens: 8192
+    pricing:
+      input_per_mtok: 3.00
+      output_per_mtok: 15.00
+    tags: [native]
+
+  - model_name: eval-gemini
+    params:
+      provider: gemini
+      model: gemini-2.5-flash
+      api_key: ${GEMINI_API_KEY:-fake-gemini-key}
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}/gemini
+    capabilities:
+      tools: true
+      json_mode: true
+      max_context_tokens: 1000000
+      max_output_tokens: 8192
+    pricing:
+      input_per_mtok: 0.30
+      output_per_mtok: 2.50
+    tags: [native]
+
+  - model_name: eval-ollama
+    params:
+      provider: ollama
+      model: llama3.2
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}/ollama
+    capabilities:
+      tools: true
+      json_mode: true
+      max_context_tokens: 128000
+      max_output_tokens: 4096
+    tags: [native, local]
+
+  - model_name: eval-gemini-embed
+    params:
+      provider: gemini
+      model: text-embedding-004
+      api_key: ${GEMINI_API_KEY:-fake-gemini-key}
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}/gemini
+    capabilities:
+      embeddings: true
+    tags: [native, embedding]
+
+  - model_name: eval-ollama-embed
+    params:
+      provider: ollama
+      model: nomic-embed-text
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}/ollama
+    capabilities:
+      embeddings: true
+    tags: [native, embedding]
+
+  # Cross-provider failover: a dead Anthropic deployment falls back to Gemini.
+  - model_name: eval-multi
+    params:
+      provider: anthropic
+      model: claude-sonnet-4-5
+      api_key: ${ANTHROPIC_API_KEY:-sk-ant-fake}
+      base_url: http://127.0.0.1:4199/anthropic
+    priority: 0
+    capabilities: {tools: true}
+    tags: [native, broken]
+
+  - model_name: eval-multi
+    params:
+      provider: gemini
+      model: gemini-2.5-flash
+      api_key: ${GEMINI_API_KEY:-fake-gemini-key}
+      base_url: ${EVAL_UPSTREAM_URL:-http://127.0.0.1:4100}/gemini
+    priority: 10
+    capabilities: {tools: true}
+    tags: [native, fallback]

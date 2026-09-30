@@ -22,6 +22,15 @@ function gridRow(page: Page, text: string): Locator {
   return page.getByRole('row').filter({ hasText: text });
 }
 
+/** Page forward through a paginated data grid until `row` is on screen. */
+async function pageToRow(page: Page, row: Locator): Promise<void> {
+  const next = page.getByRole('button', { name: 'Go to next page' });
+  await page.getByRole('grid').getByRole('row').nth(1).waitFor();
+  while (!(await row.count()) && (await next.isEnabled())) {
+    await next.click();
+  }
+}
+
 // ---------------------------------------------------------------- sign-in
 
 Given('I open the console sign-in page', async function (this: GatewayWorld) {
@@ -193,13 +202,16 @@ Then(
   'the deployment table shows {string} with priority {string} and weight {string}',
   async function (this: GatewayWorld, model: string, priority: string, weight: string) {
     const row = gridRow(this.currentPage, model).filter({ hasText: 'cheap' });
+    await pageToRow(this.currentPage, row);
     await row.getByRole('gridcell', { name: priority, exact: true }).waitFor();
     await row.getByRole('gridcell', { name: weight, exact: true }).waitFor();
   },
 );
 
 Then('the deployment table shows tags {string}', async function (this: GatewayWorld, tags: string) {
-  await this.currentPage.getByRole('gridcell', { name: tags, exact: true }).waitFor();
+  const cell = this.currentPage.getByRole('gridcell', { name: tags, exact: true });
+  await pageToRow(this.currentPage, cell);
+  await cell.waitFor();
 });
 
 When('I run a health check on the {string} fallback chain', async function (this: GatewayWorld, model: string) {
@@ -314,6 +326,8 @@ When('I choose the model {string}', async function (this: GatewayWorld, model: s
 
 When('I send the playground message {string}', async function (this: GatewayWorld, text: string) {
   const input = this.currentPage.getByPlaceholder('Ask the gateway…');
+  // A message sent while the previous reply is still streaming is ignored.
+  await this.currentPage.getByRole('button', { name: 'Send', exact: true }).waitFor();
   await input.fill(text);
   await input.press('Enter');
 });

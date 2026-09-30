@@ -48,6 +48,32 @@ Then('the streamed completion reads {string}', function (this: GatewayWorld, tex
   assert.equal(joined.trim(), this.expand(text));
 });
 
+// ---------------------------------------------------------------- tool results
+
+When(
+  'I send {string} the result {string} of a {string} tool call',
+  async function (this: GatewayWorld, model: string, result: string, tool: string) {
+    await this.request('POST', '/v1/chat/completions', {
+      token: this.credential,
+      body: {
+        model,
+        no_cache: true,
+        messages: [
+          { role: 'user', content: 'What is the weather in Paris?' },
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              { id: 'call_1', type: 'function', function: { name: tool, arguments: '{"city":"Paris"}' } },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'call_1', content: result },
+        ],
+      },
+    });
+  },
+);
+
 // ---------------------------------------------------------------- Anthropic token counting
 
 When(

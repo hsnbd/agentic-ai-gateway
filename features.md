@@ -20,13 +20,19 @@ double-counted metrics · `/v1/rag/query` always 500 · any virtual key or viewe
 failed-over requests attributed to the dead deployment · Anthropic streaming broken for the TypeScript SDK ·
 `MAX_RETRIES` off by one · logging/tracing settings ignored · system info reporting RAG/MCP as off ·
 console: RAG page crash, every key shown "Disabled", Models columns blank, playground bypassing fallback and
-breaking on stream errors, no user management.
+breaking on stream errors, never sending the message just typed, no user management · streamed upstream errors crashed while being mapped (raw 500,
+no context-length fallback).
 
 Test suites referenced below:
 
 - **unit**: `tests/unit/` (`uv run pytest tests/unit`)
 - **int**: `tests/integration/`, which boots the real app against real Postgres and Redis Stack (`make test-integration`)
+- **ui-unit**: `ui/src/**/*.test.ts(x)`, Vitest + Testing Library (`make ui-test`)
 - **e2e**: `e2e/` Cucumber + Playwright scenarios against the dockerised stack (`make e2e`)
+
+**Coverage gates.** unit + int together must cover 100% of `app/` (lines and branches);
+`make coverage` and the CI `coverage` job fail otherwise. ui-unit must cover 100% of the console's
+logic layer (API client, SSE parsing, playground inspector, formatters, auth, shared components).
 
 ---
 
@@ -36,12 +42,12 @@ Test suites referenced below:
 |---|---|---|
 | `POST /v1/chat/completions` (OpenAI), unary | ✅ | unit, int, e2e (official `openai` SDK) |
 | `POST /v1/chat/completions` SSE streaming, `[DONE]`, `stream_options.include_usage` | ✅ | unit, int, e2e |
-| `POST /v1/completions` legacy wrapper (unary and stream) | ✅ | unit, int |
+| `POST /v1/completions` legacy wrapper (unary and stream) | ✅ | unit, int, e2e (`legacy_completions.feature`) |
 | `POST /v1/embeddings` | ✅ | int, e2e |
-| `GET /v1/models`, `GET /v1/models/{model}` | ✅ | unit, int |
+| `GET /v1/models`, `GET /v1/models/{model}` (disabled-only models are 404) | ✅ | unit, int |
 | `POST /v1/messages` (Anthropic), unary + named SSE events | ✅ | unit, int, e2e (official `@anthropic-ai/sdk`) |
 | Anthropic SSE payloads carry `"type"` (required by the TypeScript SDK) | ✅ | **fixed**: streaming broke Node clients; int, e2e |
-| `POST /v1/messages/count_tokens` | ✅ | unit, int |
+| `POST /v1/messages/count_tokens` | ✅ | unit, int, e2e. Note: does not authenticate the caller |
 | Tool / function calling normalised across dialects | ✅ | unit, e2e (SDK tool call) |
 | Model aliases (`gpt-4o` → `test-model`), allowlist applies through aliases | ✅ | int |
 | Structured OpenAI / Anthropic error envelopes | ✅ | unit, int |
@@ -52,11 +58,12 @@ Test suites referenced below:
 | Feature | Status | Tests |
 |---|---|---|
 | OpenAI adapter (chat, stream, embeddings, health) | ✅ | unit (respx), e2e against the fake upstream |
-| Anthropic adapter (chat, stream, tools, images) | 🟡 | unit (respx) |
-| Google Gemini adapter (chat, stream, embeddings, health) | 🟡 | unit (respx) |
-| Ollama adapter (chat, embed, tags) | 🟡 | unit (respx) |
+| Streamed upstream error statuses are mapped with their detail (all adapters) | ✅ | **fixed**: body was unread, so mapping raised `ResponseNotRead`; unit |
+| Anthropic adapter (chat, stream, tools, tool results, images) | ✅ | unit (respx); e2e against the fake upstream's native Messages API, incl. the Anthropic SDK on a native deployment (`native_providers`) |
+| Google Gemini adapter (chat, stream, tools, tool results, embeddings, health) | ✅ | unit (respx); e2e against the fake upstream's native `generateContent` / SSE / `embedContent` (`native_providers`) |
+| Ollama adapter (chat, NDJSON stream, tools, tool results, embed, tags) | ✅ | unit (respx); e2e against the fake upstream's native `/api/chat` and `/api/embed` (`native_providers`) |
 | YAML model catalogue, `${VAR:-default}` expansion, multiple deployments per model | ✅ | unit, int, e2e |
-| Runtime catalogue reload (`POST /admin/api/config/reload`) | ✅ | unit, int |
+| Runtime catalogue reload (`POST /admin/api/config/reload`) | ✅ | unit, int, e2e |
 
 ## 3. Routing and resilience
 
@@ -65,7 +72,7 @@ Test suites referenced below:
 | Strategies: priority, least-cost, lowest-latency (EWMA), weighted, conditional | ✅ | unit, e2e (`routing.feature`) |
 | Per-request strategy override | ✅ | unit, e2e |
 | Retries with full-jitter backoff honouring `Retry-After` | ✅ | unit, int |
-| Cross-deployment fallback chain (`MAX_FALLBACKS`) | ✅ | unit, int, e2e (dead primary in `models.eval.yaml`) |
+| Cross-deployment fallback chain (`MAX_FALLBACKS`) | ✅ | unit, int, e2e (dead primary in `models.eval.yaml`; `eval-multi` fails over from Anthropic to Gemini) |
 | Request log, cost, and console name the deployment that *served* a failed-over request | ✅ | **fixed**: logs blamed the dead primary; int, e2e |
 | Streaming fallback before first chunk | ✅ | unit, int |
 | Circuit breaker (closed / open / half-open) | ✅ | unit |
@@ -81,7 +88,7 @@ Test suites referenced below:
 | Redis Stack HNSW vector cache, lazy index creation / rebuild | ✅ | unit, int, e2e |
 | Namespace isolation (model, tenant, system prompt, params, tools) | ✅ | unit |
 | Eligibility rules (no tools, temperature cap, finish = stop), `no_cache` opt-out | ✅ | unit, e2e |
-| Admin: stats, entries, invalidate | ✅ | unit, int |
+| Admin: stats, entries, invalidate | ✅ | unit, int, e2e (invalidation forces a fresh answer) |
 | Cache hit served over HTTP against real Redis Stack | ✅ | int (`test_accounting_http.py`) |
 | Cache hits are not billed; `cost_saved_usd` recorded | ✅ | **fixed**; int |
 | `X-Gateway-Cache-Similarity` response header on hits (unary and streamed) | ✅ | **new**; int, e2e |
@@ -92,7 +99,7 @@ Test suites referenced below:
 | Feature | Status | Tests |
 |---|---|---|
 | Collections CRUD (`/v1/rag/collections`) | ✅ | int (`test_rag_api.py`) |
-| Document ingest (JSON / multipart text), list, delete | ✅ | unit, int |
+| Document ingest (JSON / multipart text), list, delete; multipart validation (file field, .txt/.md, metadata JSON) | ✅ | unit, int |
 | Markdown-aware chunking, idempotent ingest, rollback on vector failure | ✅ | unit, int |
 | Chunk inspector (list / get with embedding preview) | ✅ | unit, int |
 | `POST /v1/rag/search` with MMR diversity and filters | ✅ | unit, int |
@@ -123,7 +130,7 @@ Test suites referenced below:
 |---|---|---|
 | Rule types: regex, denylist, length, topic, PII (Luhn, SSN, email…) | ✅ | unit, int |
 | Actions: block, redact, flag; input and output stages | ✅ | unit, int, e2e |
-| Violations persisted and listed (`/admin/api/guardrails/violations`) | ✅ | unit, int |
+| Violations persisted and listed (`/admin/api/guardrails/violations`); policies listed | ✅ | unit, int, e2e |
 | Block / redact observed over HTTP (input PII, prompt injection, output secrets, per-key policy) | ✅ | int (`test_policies_http.py`) |
 | Output guardrails on streamed responses: redaction across chunk boundaries (holdback window), block ends the stream | ✅ | **new** `StreamRedactor`; unit, int, e2e |
 | LLM-judge guardrail (`type: llm_judge`, threshold, `on_error` allow/block); judge calls bypass the pipeline and are not billed | ✅ | **new**; unit, int (`test_llm_judge_http.py`), e2e (`judged` policy in `config/guardrails.eval.yaml`) |
@@ -136,7 +143,7 @@ Test suites referenced below:
 | Key create (shown once), list, get, update, regenerate, delete, disable | ✅ | unit, int (`test_admin_flows.py`) |
 | Expired / inactive key rejection | ✅ | unit, int |
 | RPM rate limit (Redis sliding window, fail-open) → 429 + `Retry-After` | ✅ | unit, int |
-| Budgets on keys and teams (charged for unary and streamed requests) | ✅ | **fixed** (spend was never recorded); int |
+| Budgets on keys and teams (charged for unary and streamed requests) | ✅ | **fixed** (spend was never recorded); int, e2e (key and team budgets) |
 | Teams CRUD and team usage | ✅ | int |
 | Key `tpm_limit`, `max_parallel_requests`, `allowed_routes` | ✅ | **new**; int, e2e |
 | `Retry-After` reflects real wait time (rounded up, never 0) | ✅ | **fixed**; int |
@@ -161,10 +168,10 @@ Test suites referenced below:
 | Feature | Status | Tests |
 |---|---|---|
 | Console login (argon2 + JWT), `me`, logout | ✅ | unit, int |
-| Change password (admin + self-service) | ✅ | unit, int |
-| Users CRUD, last-admin protection | ✅ | unit, int |
+| Change password (admin + self-service); wrong current password refused | ✅ | unit, int, e2e |
+| Users CRUD, last-admin protection, no self-demotion or self-deletion | ✅ | unit, int, e2e |
 | Role enforcement (admin vs viewer) on admin, RAG, and MCP routes | ✅ | unit, int |
-| Dashboard summary and timeseries | ✅ | unit, int |
+| Dashboard summary and timeseries; malformed windows and `order_by` rejected (422) | ✅ | unit, int, e2e |
 | Logs list / filter / detail / reveal / CSV export | ✅ | unit, int |
 | Usage by dimension, usage costs | ✅ | unit, int |
 | Deployments, models, provider status, health check | ✅ | **fixed**: health check 404'd for every generated id (`provider/model`); int |
@@ -178,20 +185,20 @@ All console scenarios run in Chromium via Playwright (`e2e/features/ui`).
 
 | Feature | Status | Tests |
 |---|---|---|
-| Login, route guards, redirect back after login, sign out | ✅ | e2e (`auth.feature`) |
+| Login, route guards, redirect back after login, sign out | ✅ | ui-unit (`AuthProvider`, `RouteGuards`), e2e (`auth.feature`) |
 | Role-based navigation (viewers see read-only sections only) | ✅ | **fixed**: nav hid Cache/RAG/MCP from viewers although routes allowed them; e2e |
 | Every page renders without an error | ✅ | e2e (`navigation.feature`) |
 | Dashboard | ✅ | e2e |
 | Models & routing: priority, weight, tags, true capabilities, chains in priority order | ✅ | **fixed**: columns were hard-coded "—" and chains sorted by id; e2e |
 | Deployment health check button | ✅ | **fixed**: always 404 (unencoded `provider/model#n` ids); e2e |
 | Logs (filters, search, detail drawer, routing decision) | ✅ | e2e (`logs.feature`) |
-| Usage | ✅ | e2e (renders) |
-| Guardrails (policies, violations) | ✅ | e2e (renders) |
-| Cache (stats, entries, invalidate) | ✅ | e2e (renders) |
+| Usage | ✅ | e2e (lists a model that served traffic) |
+| Guardrails (policies, violations) | ✅ | e2e (viewer sees the `default` policy) |
+| Cache (stats, entries, invalidate) | ✅ | e2e (reports the cache available) |
 | RAG collections (create, paste text, retrieval test) | ✅ | **fixed**: page crashed as soon as a collection existed (TDZ); e2e |
 | MCP servers (add, discover tools, health) | ✅ | e2e |
 | Virtual keys (create shows secret once, status, disable, delete) | ✅ | **fixed**: every key showed "Disabled" (`is_active` vs `enabled`); e2e |
-| Playground (streaming chat through normal routing) | ✅ | **fixed**: pinned a deployment (bypassing fallback), stream errors broke the connection, model picker had no label; int, e2e |
+| Playground (streaming chat through normal routing); SSE parsing and inspector | ✅ | **fixed**: pinned a deployment (bypassing fallback), stream errors broke the connection, model picker had no label, the message just typed was never sent (the request used the conversation from before it); ui-unit (`sse`, `inspector`), int, e2e |
 | Settings: user management (add, role, activate/deactivate, delete) | ✅ | **new**: page claimed the API was missing; e2e |
 | Settings: provider credential status, system info, subsystems | ✅ | **new** (was "not exposed"); e2e |
 | Logout calls the server | ✅ | **fixed** |
@@ -225,7 +232,7 @@ All console scenarios run in Chromium via Playwright (`e2e/features/ui`).
 | Cucumber + Playwright E2E suite (API via official SDKs + console UI) | ✅ | 86 scenarios / 445 steps, `make e2e` |
 | SDK compatibility script (`scripts/agent_compat.py`) | ✅ | 10/10 against fake upstream |
 | Evaluation harness (`scripts/evaluate.py`) | ✅ | 100% success, failover and routing verified |
-| Deterministic fakes: OpenAI upstream (bag-of-words embeddings), MCP server (HTTP + stdio) | ✅ | `scripts/fake_upstream.py`, `scripts/fake_mcp_server.py` |
+| Deterministic fakes: multi-provider upstream (OpenAI, Anthropic, Gemini, Ollama wire formats; bag-of-words embeddings), MCP server (HTTP + stdio) | ✅ | `scripts/fake_upstream.py`, `scripts/fake_mcp_server.py` |
 | CI: ruff on `tests/`, UI lint, integration job with Postgres + Redis Stack services, E2E job with report artifact | ✅ | `.github/workflows/ci.yml` |
 | Coverage report / gate | 💡 | |
 | Load test in CI (`scripts/loadtest.py`) | 💡 | |
@@ -243,7 +250,6 @@ What is still open, ordered by value; none are started:
 1. **Guardrails on tool traffic**: scan MCP tool arguments and results in the agent loop, not only prompts and answers.
 2. **Streaming agent hops**: stream intermediate model turns instead of only the final answer.
 3. **Non-text RAG ingestion** (PDF, DOCX, HTML) and background ingestion for large documents.
-4. **Coverage report and gate** in CI.
-5. **Load test in CI** (`scripts/loadtest.py`) with latency budgets.
-6. **Repo-wide `ruff format`** once, then enforced in CI.
-7. **Provider adapters against live APIs**: an opt-in `live`-marked suite for Anthropic, Gemini, and Ollama, which today are covered only by mocked unit tests.
+4. **Load test in CI** (`scripts/loadtest.py`) with latency budgets.
+5. **Repo-wide `ruff format`** once, then enforced in CI.
+6. **Provider adapters against live APIs**: an opt-in `live`-marked suite for Anthropic, Gemini, and Ollama. Today they run end to end against the fake upstream, which follows each vendor's documented wire format but cannot catch the vendor changing it.

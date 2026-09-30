@@ -32,7 +32,10 @@ The harness has to prove behaviour that real providers cannot be asked to
 produce on demand: a deployment that is guaranteed to fail, a response that is
 byte-identical across calls, and an embedding that is stable enough to reason
 about cache hits. [`scripts/fake_upstream.py`](../scripts/fake_upstream.py)
-gives all three, and it keeps the evaluation free and offline.
+gives all three, and it keeps the evaluation free and offline. It also speaks
+the Anthropic, Gemini, and Ollama native APIs (under `/anthropic`, `/gemini`,
+and `/ollama`), so every adapter's translation runs end to end; see the
+`eval-anthropic`, `eval-gemini`, `eval-ollama`, and `eval-multi` models.
 
 Its one important limitation is stated plainly here: its embeddings are
 **hash-based, not semantic**. Identical text produces an identical vector, so

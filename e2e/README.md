@@ -13,7 +13,8 @@ npm run stack:down
 
 The stack (`docker-compose.e2e.yaml`) is the real gateway image with its
 console, Postgres, Redis Stack, and two deterministic fakes from `../scripts`:
-an OpenAI-compatible upstream and an MCP server. It uses
+an upstream that speaks the OpenAI, Anthropic, Gemini, and Ollama wire formats
+(under `/`, `/anthropic`, `/gemini`, and `/ollama`) and an MCP server. It uses
 `config/models.eval.yaml`, whose `eval-chat` primary deployment is deliberately
 dead, so every chat request exercises failover.
 

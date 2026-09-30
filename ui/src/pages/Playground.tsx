@@ -89,22 +89,23 @@ export default function Playground() {
   const modelOptions = models.data?.items ?? [];
   // Outside compare mode, send the model name so the gateway routes and falls back as it would for any client; pinning a deployment would bypass both.
   const selectedDeployments = useMemo<(string | undefined)[]>(() => compareMode && compareDeployments.length ? compareDeployments : [undefined], [compareMode, compareDeployments]);
-  const buildBody = (deployment?: string): Record<string, unknown> => {
-    const chatMessages = [...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []), ...messages.map(({ role, content, toolCalls, toolCallId }) => ({ role, content, ...(toolCalls ? { tool_calls: toolCalls } : {}), ...(toolCallId ? { tool_call_id: toolCallId } : {}) }))];
+  // The conversation is passed in explicitly: `messages` in this render predates the turn being sent.
+  const buildBody = (history: PlaygroundMessage[], deployment?: string): Record<string, unknown> => {
+    const chatMessages = [...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []), ...history.map(({ role, content, toolCalls, toolCallId }) => ({ role, content, ...(toolCalls ? { tool_calls: toolCalls } : {}), ...(toolCallId ? { tool_call_id: toolCallId } : {}) }))];
     return { model: deployment ?? model, messages: chatMessages, stream: streaming && !ragMode, ...(temperature ? { temperature: Number(temperature) } : {}), ...(topP ? { top_p: Number(topP) } : {}), ...(maxTokens ? { max_tokens: Number(maxTokens) } : {}), ...(stop ? { stop: parseList(stop) } : {}), no_cache: noCache, ...(routing ? { routing_strategy: routing } : {}), fallbacks: parseList(fallbacks), ...(guardrail ? { guardrail_policy: guardrail } : {}), tags: parseList(tags) };
   };
-  const runOne = async (deployment: string | undefined, prompt: string): Promise<void> => {
+  const runOne = async (deployment: string | undefined, history: PlaygroundMessage[], prompt: string): Promise<void> => {
     const controller = new AbortController(); abortRefs.current.add(controller);
     setError(null);
     const assistantId = newId(); setMessages((current) => [...current, { id: assistantId, role: 'assistant', content: '' }]);
     try {
       if (ragMode) {
-        const body = { collection_id: collection, request: buildBody(deployment), query: prompt };
+        const body = { collection_id: collection, request: buildBody(history, deployment), query: prompt };
         const result = await apiRequest<RagResponse>('/v1/rag/query', { method: 'POST', body, signal: controller.signal });
         const content = result.response.choices?.[0]?.message?.content ?? '';
         setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, content } : item)); setCitations(result.sources); setInspector(inspectorFromPlayground(result)); return;
       }
-      const body = buildBody(deployment);
+      const body = buildBody(history, deployment);
       if (body.stream !== true) {
         const result = await apiRequest<PlaygroundResponse>('/admin/api/playground/chat', { method: 'POST', body, signal: controller.signal });
         const message = result.response.choices?.[0]?.message;
@@ -133,10 +134,10 @@ export default function Playground() {
       else setInspector((current) => mergeInspector(inspectorFromPlayground({}, result.headers), current));
     } catch (runError: unknown) { if (!(runError instanceof DOMException && runError.name === 'AbortError')) setError(runError); } finally { abortRefs.current.delete(controller); if (abortRefs.current.size === 0) setRunning(false); }
   };
-  const send = () => { const prompt = input.trim(); if (!prompt || running) return; setRunning(true); setInput(''); setMessages((current) => [...current, { id: newId(), role: 'user', content: prompt }]); void Promise.all(selectedDeployments.map((deployment) => runOne(deployment, prompt))); };
+  const send = () => { const prompt = input.trim(); if (!prompt || running) return; setRunning(true); setInput(''); const turn: PlaygroundMessage = { id: newId(), role: 'user', content: prompt }; const history = [...messages, turn]; setMessages((current) => [...current, turn]); void Promise.all(selectedDeployments.map((deployment) => runOne(deployment, history, prompt))); };
   const stopRequest = () => { for (const controller of abortRefs.current) controller.abort(); setRunning(false); };
   const edit = (message: PlaygroundMessage) => { setInput(message.content); setMessages((current) => current.filter((item) => item.id !== message.id)); };
-  const regenerate = (message: PlaygroundMessage) => { const previous = [...messages].reverse().find((item) => item.role === 'user'); if (previous) { setMessages((current) => current.filter((item) => item.id !== message.id)); void runOne(selectedDeployments[0] ?? model, previous.content); } };
+  const regenerate = (message: PlaygroundMessage) => { const previous = [...messages].reverse().find((item) => item.role === 'user'); if (previous) { setMessages((current) => current.filter((item) => item.id !== message.id)); void runOne(selectedDeployments[0] ?? model, messages.slice(0, messages.indexOf(previous) + 1), previous.content); } };
 
   if (models.isLoading || deployments.isLoading) return <LoadingState label="Loading models and deployments" />;
   if (models.isError || deployments.isError) return <ErrorState error={models.error ?? deployments.error} />;

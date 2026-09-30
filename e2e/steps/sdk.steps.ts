@@ -12,6 +12,7 @@ interface SdkState {
   embeddings?: OpenAI.Embeddings.CreateEmbeddingResponse;
   models?: string[];
   anthropicText?: string;
+  streamedCall?: { name: string; arguments: string; finish: string };
 }
 
 function sdk(world: GatewayWorld): SdkState {
@@ -30,6 +31,17 @@ function anthropic(world: GatewayWorld): Anthropic {
 
 // ---------------------------------------------------------------- OpenAI SDK
 
+function weatherTool(name: string): OpenAI.Chat.Completions.ChatCompletionTool {
+  return {
+    type: 'function',
+    function: {
+      name,
+      description: 'Look up the weather for a city',
+      parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+    },
+  };
+}
+
 When('I ask {string} {string} with the OpenAI SDK', async function (this: GatewayWorld, model: string, text: string) {
   sdk(this).completion = await openai(this).chat.completions.create({
     model,
@@ -43,17 +55,40 @@ When(
     sdk(this).completion = await openai(this).chat.completions.create({
       model,
       messages: [{ role: 'user', content: text }],
-      tools: [
-        {
-          type: 'function',
-          function: {
-            name: tool,
-            description: 'Look up the weather for a city',
-            parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
-          },
-        },
-      ],
+      tools: [weatherTool(tool)],
     });
+  },
+);
+
+When(
+  'I stream {string} {string} with the OpenAI SDK offering the {string} tool',
+  async function (this: GatewayWorld, model: string, text: string, tool: string) {
+    const stream = await openai(this).chat.completions.create({
+      model,
+      stream: true,
+      messages: [{ role: 'user', content: text }],
+      tools: [weatherTool(tool)],
+    });
+    const call = { name: '', arguments: '', finish: '' };
+    for await (const chunk of stream) {
+      const choice = chunk.choices[0];
+      for (const delta of choice?.delta?.tool_calls ?? []) {
+        call.name += delta.function?.name ?? '';
+        call.arguments += delta.function?.arguments ?? '';
+      }
+      call.finish = choice?.finish_reason ?? call.finish;
+    }
+    sdk(this).streamedCall = call;
+  },
+);
+
+Then(
+  'the streamed tool call is {string} with arguments {}',
+  function (this: GatewayWorld, tool: string, args: string) {
+    const call = sdk(this).streamedCall;
+    assert.equal(call?.finish, 'tool_calls', JSON.stringify(call));
+    assert.equal(call?.name, tool);
+    assert.deepEqual(JSON.parse(call?.arguments || '{}'), JSON.parse(args));
   },
 );
 
