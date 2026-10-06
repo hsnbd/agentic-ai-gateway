@@ -113,9 +113,7 @@ class TestOpenAIDialect:
         ]
         assert payloads, "stream produced no chunks"
         assert payloads[0]["object"] == "chat.completion.chunk"
-        text = "".join(
-            chunk["choices"][0]["delta"].get("content", "") for chunk in payloads
-        )
+        text = "".join(chunk["choices"][0]["delta"].get("content", "") for chunk in payloads)
         assert "primary" in text
 
     def test_models_endpoint_lists_catalogue(
@@ -128,9 +126,7 @@ class TestOpenAIDialect:
 
 
 class TestAnthropicDialect:
-    def test_messages_round_trip(
-        self, client: TestClient, primary: FakeProvider
-    ) -> None:
+    def test_messages_round_trip(self, client: TestClient, primary: FakeProvider) -> None:
         """Anthropic SDK clients authenticate with x-api-key, not bearer."""
         response = client.post(
             "/v1/messages",
@@ -178,7 +174,10 @@ class TestResilience:
         assert primary.calls >= 2, "expected the executor to retry"
 
     def test_exhausted_provider_surfaces_a_clean_error(
-        self, client: TestClient, auth_headers: dict[str, str], primary: FakeProvider,
+        self,
+        client: TestClient,
+        auth_headers: dict[str, str],
+        primary: FakeProvider,
         backup: FakeProvider,
     ) -> None:
         """When everything upstream is down the client still gets a structured

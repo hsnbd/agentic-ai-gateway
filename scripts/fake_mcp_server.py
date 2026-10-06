@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+import uuid
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
@@ -98,16 +100,38 @@ def handle(message: dict[str, Any]) -> dict[str, Any] | None:
     return {"jsonrpc": "2.0", "id": message["id"], "result": result}
 
 
-def create_app() -> FastAPI:
+def create_app(session_ttl: float | None = None) -> FastAPI:
+    """The HTTP transport.
+
+    With ``session_ttl``, every ``initialize`` opens a new session that expires
+    after that many seconds; later requests carrying an expired or unknown
+    ``Mcp-Session-Id`` get HTTP 404, as the MCP spec prescribes, so clients'
+    session-recovery paths can be tested. Without it, one fixed session id is
+    used and never expires.
+    """
     app = FastAPI(title="fake-mcp")
+    sessions: dict[str, float] = {}
 
     @app.post("/")
     @app.post("/mcp")
     async def rpc(request: Request) -> Response:
-        reply = handle(await request.json())
+        message = await request.json()
+        session_id = SESSION_ID
+        if session_ttl is not None:
+            now = time.monotonic()
+            if message.get("method") == "initialize":
+                session_id = uuid.uuid4().hex
+                sessions[session_id] = now
+            else:
+                session_id = request.headers.get("mcp-session-id", "")
+                started = sessions.get(session_id)
+                if started is None or now - started > session_ttl:
+                    sessions.pop(session_id, None)
+                    return JSONResponse({"error": "unknown or expired session"}, status_code=404)
+        reply = handle(message)
         if reply is None:
             return Response(status_code=202)
-        return JSONResponse(reply, headers={"Mcp-Session-Id": SESSION_ID})
+        return JSONResponse(reply, headers={"Mcp-Session-Id": session_id})
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -132,13 +156,19 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=4200)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--stdio", action="store_true", help="Serve over stdin/stdout")
+    parser.add_argument(
+        "--session-ttl",
+        type=float,
+        default=None,
+        help="Expire HTTP sessions after this many seconds (clients must re-initialize)",
+    )
     args = parser.parse_args()
     if args.stdio:
         serve_stdio()
         return
     import uvicorn
 
-    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(create_app(args.session_ttl), host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":

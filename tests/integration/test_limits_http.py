@@ -166,9 +166,9 @@ class TestStreamingGuardrails:
         )
         assert content == "Your key is [API_KEY_REDACTED], keep it safe."
 
-        violations = client.get(
-            "/admin/api/guardrails/violations", headers=admin_headers
-        ).json()["items"]
+        violations = client.get("/admin/api/guardrails/violations", headers=admin_headers).json()[
+            "items"
+        ]
         assert any(v["rule"] == "redact-leaked-api-keys" for v in violations)
 
 
@@ -206,7 +206,7 @@ class TestStreamingBlock:
         status, text = _stream_text(client, auth_headers)
         assert "forbidden material" not in text
         assert status == 422 or "guardrail_violation" in text
-        violations = client.get(
-            "/admin/api/guardrails/violations", headers=admin_headers
-        ).json()["items"]
+        violations = client.get("/admin/api/guardrails/violations", headers=admin_headers).json()[
+            "items"
+        ]
         assert any(v["rule"] == "block-forbidden" for v in violations)

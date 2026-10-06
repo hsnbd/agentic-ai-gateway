@@ -131,6 +131,8 @@ class KeyCreateRequest(BaseModel):
     blocked_models: list[str] = Field(default_factory=list)
     guardrail_policy: str | None = None
     allowed_routes: list[str] = Field(default_factory=list)
+    allowed_mcp_servers: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
     expires_at: datetime | None = None
     enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -148,6 +150,8 @@ class KeyUpdateRequest(BaseModel):
     blocked_models: list[str] | None = None
     guardrail_policy: str | None = None
     allowed_routes: list[str] | None = None
+    allowed_mcp_servers: list[str] | None = None
+    allowed_tools: list[str] | None = None
     expires_at: datetime | None = None
     enabled: bool | None = None
     metadata: dict[str, Any] | None = None
@@ -170,6 +174,8 @@ class VirtualKeyResponse(BaseModel):
     blocked_models: list[str]
     guardrail_policy: str | None
     allowed_routes: list[str]
+    allowed_mcp_servers: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
     enabled: bool = Field(validation_alias="is_active")
     expires_at: datetime | None
     last_used_at: datetime | None
@@ -352,6 +358,24 @@ class GuardrailViolationResponse(BaseModel):
     match_count: int
     excerpt: str | None
     details: dict[str, Any]
+
+
+class ToolCallLogResponse(BaseModel):
+    id: str
+    created_at: datetime
+    request_id: str | None
+    virtual_key_id: str | None
+    team_id: str | None
+    source: str
+    server_id: str | None
+    tool: str
+    status: str
+    duration_ms: float
+    arguments_hash: str | None
+    result_chars: int
+    truncated: bool
+    guardrail: str | None
+    error: str | None
 
 
 class GuardrailPolicyResponse(BaseModel):

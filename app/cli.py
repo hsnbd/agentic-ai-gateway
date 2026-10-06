@@ -43,9 +43,7 @@ async def _cmd_create_admin(args: argparse.Namespace) -> int:
 
     async def run(db: Database) -> int:
         service = ConsoleAuthService(db)
-        user = await service.create_user(
-            email=args.email, password=args.password, role=args.role
-        )
+        user = await service.create_user(email=args.email, password=args.password, role=args.role)
         print(f"Created {user.role} {user.email} (id {user.id}).")
         return 0
 

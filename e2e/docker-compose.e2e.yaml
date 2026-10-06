@@ -49,7 +49,9 @@ services:
 
   fake-mcp:
     <<: *tools
-    command: ["scripts/fake_mcp_server.py", "--host", "0.0.0.0", "--port", "4200"]
+    # Sessions expire every few seconds, so every MCP scenario also exercises
+    # the gateway's session recovery (re-initialize and replay).
+    command: ["scripts/fake_mcp_server.py", "--host", "0.0.0.0", "--port", "4200", "--session-ttl", "5"]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4200/healthz')"]
       interval: 2s

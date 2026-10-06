@@ -55,11 +55,13 @@ async def test_chat_translation_and_response(
                     "id": "chatcmpl-1",
                     "model": "gpt-4o",
                     "created": 123,
-                    "choices": [{
-                        "index": 0,
-                        "message": {"role": "assistant", "content": "Hello"},
-                        "finish_reason": "stop",
-                    }],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "Hello"},
+                            "finish_reason": "stop",
+                        }
+                    ],
                     "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
                 },
             )
@@ -141,22 +143,26 @@ async def test_tool_call_translation_and_parsing(
             return_value=httpx.Response(
                 200,
                 json={
-                    "choices": [{
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [{
-                                "id": "call-1",
-                                "type": "function",
-                                "function": {
-                                    "name": "weather",
-                                    "arguments": '{"city":"Paris"}',
-                                },
-                            }],
-                        },
-                        "finish_reason": "tool_calls",
-                    }]
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call-1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "weather",
+                                            "arguments": '{"city":"Paris"}',
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
                 },
             )
         )
@@ -170,11 +176,15 @@ async def test_tool_call_translation_and_parsing(
                 ),
                 Message(role=Role.TOOL, content="sunny", tool_call_id="call-0"),
             ],
-            tools=[ToolDef(function=FunctionDef(
-                name="weather",
-                description="Get weather",
-                parameters={"type": "object", "properties": {}},
-            ))],
+            tools=[
+                ToolDef(
+                    function=FunctionDef(
+                        name="weather",
+                        description="Get weather",
+                        parameters={"type": "object", "properties": {}},
+                    )
+                )
+            ],
             tool_choice=ToolChoice(mode="function", function_name="weather"),
         )
         result = await OpenAIProvider(client).chat(request, deployment)
@@ -184,11 +194,13 @@ async def test_tool_call_translation_and_parsing(
         {
             "role": "assistant",
             "content": None,
-            "tool_calls": [{
-                "id": "call-0",
-                "type": "function",
-                "function": {"name": "weather", "arguments": "{}"},
-            }],
+            "tool_calls": [
+                {
+                    "id": "call-0",
+                    "type": "function",
+                    "function": {"name": "weather", "arguments": "{}"},
+                }
+            ],
         },
         {"role": "tool", "content": "sunny", "tool_call_id": "call-0"},
     ]
@@ -213,10 +225,15 @@ async def test_multimodal_image_translation(
         await OpenAIProvider(client).chat(
             ChatRequest(
                 model="gpt-4o",
-                messages=[Message(role=Role.USER, content=[
-                    TextPart(text="Describe"),
-                    ImagePart(url="https://example.com/image.png", detail="high"),
-                ])],
+                messages=[
+                    Message(
+                        role=Role.USER,
+                        content=[
+                            TextPart(text="Describe"),
+                            ImagePart(url="https://example.com/image.png", detail="high"),
+                        ],
+                    )
+                ],
             ),
             deployment,
         )
@@ -235,32 +252,68 @@ async def test_stream_tool_call_deltas_and_final_usage(
     client: httpx.AsyncClient, deployment: Deployment
 ) -> None:
     chunks = [
-        {"id": "stream-1", "model": "gpt-4o", "choices": [{
-            "index": 0, "delta": {"role": "assistant"},
-        }]},
-        {"id": "stream-1", "model": "gpt-4o", "choices": [{
-            "index": 0, "delta": {"tool_calls": [{
-                "index": 0,
-                "id": "call-1",
-                "function": {"name": "weather", "arguments": '{"city":'},
-            }]},
-        }]},
-        {"id": "stream-1", "model": "gpt-4o", "choices": [{
-            "index": 0,
-            "delta": {"tool_calls": [{
-                "index": 0, "function": {"arguments": '"Paris"}'},
-            }]},
-            "finish_reason": "tool_calls",
-        }]},
-        {"id": "stream-1", "model": "gpt-4o", "choices": [], "usage": {
-            "prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6,
-        }},
+        {
+            "id": "stream-1",
+            "model": "gpt-4o",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant"},
+                }
+            ],
+        },
+        {
+            "id": "stream-1",
+            "model": "gpt-4o",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call-1",
+                                "function": {"name": "weather", "arguments": '{"city":'},
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+        {
+            "id": "stream-1",
+            "model": "gpt-4o",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {"arguments": '"Paris"}'},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        },
+        {
+            "id": "stream-1",
+            "model": "gpt-4o",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 4,
+                "completion_tokens": 2,
+                "total_tokens": 6,
+            },
+        },
     ]
     stream_body = "\n\n".join(f"data: {json.dumps(chunk)}" for chunk in chunks)
     with respx.mock(base_url="https://api.openai.com/v1") as router:
-        route = router.post("/chat/completions").mock(return_value=httpx.Response(
-            200, text=f": keepalive\n{stream_body}\ndata: [DONE]\n"
-        ))
+        route = router.post("/chat/completions").mock(
+            return_value=httpx.Response(200, text=f": keepalive\n{stream_body}\ndata: [DONE]\n")
+        )
         provider = OpenAIProvider(client)
         request = ChatRequest(model="gpt-4o", messages=[Message(role=Role.USER, content="Hi")])
         iterator = provider.stream(request, deployment)
@@ -284,21 +337,21 @@ async def test_embeddings_are_sorted_by_index(
     client: httpx.AsyncClient, deployment: Deployment
 ) -> None:
     with respx.mock(base_url="https://api.openai.com/v1") as router:
-        route = router.post("/embeddings").mock(return_value=httpx.Response(
-            200,
-            json={
-                "model": "text-embedding-3-small",
-                "data": [
-                    {"index": 1, "embedding": [0.2, 0.3]},
-                    {"index": 0, "embedding": [0.1, 0.2]},
-                ],
-                "usage": {"prompt_tokens": 5, "total_tokens": 5},
-            },
-        ))
+        route = router.post("/embeddings").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "model": "text-embedding-3-small",
+                    "data": [
+                        {"index": 1, "embedding": [0.2, 0.3]},
+                        {"index": 0, "embedding": [0.1, 0.2]},
+                    ],
+                    "usage": {"prompt_tokens": 5, "total_tokens": 5},
+                },
+            )
+        )
         result = await OpenAIProvider(client).embed(
-            EmbeddingRequest(
-                model="text-embedding-3-small", input=["a", "b"], dimensions=2
-            ),
+            EmbeddingRequest(model="text-embedding-3-small", input=["a", "b"], dimensions=2),
             deployment,
         )
     body = json.loads(route.calls[0].request.content)
@@ -314,8 +367,11 @@ async def test_embeddings_are_sorted_by_index(
     [
         (429, {"error": {"message": "rate limited"}}, ErrorCode.PROVIDER_RATE_LIMIT),
         (401, {"error": {"message": "bad key"}}, ErrorCode.AUTHENTICATION_ERROR),
-        (400, {"error": {"message": "maximum context length exceeded"}},
-         ErrorCode.CONTEXT_LENGTH_EXCEEDED),
+        (
+            400,
+            {"error": {"message": "maximum context length exceeded"}},
+            ErrorCode.CONTEXT_LENGTH_EXCEEDED,
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -327,9 +383,7 @@ async def test_http_errors_are_mapped(
     expected: ErrorCode,
 ) -> None:
     with respx.mock(base_url="https://api.openai.com/v1") as router:
-        router.post("/chat/completions").mock(
-            return_value=httpx.Response(status, json=body)
-        )
+        router.post("/chat/completions").mock(return_value=httpx.Response(status, json=body))
         with pytest.raises(ProviderError) as error:
             await OpenAIProvider(client).chat(
                 ChatRequest(model="gpt-4o", messages=[Message(role=Role.USER, content="x")]),
@@ -345,10 +399,12 @@ async def test_gateway_fields_are_not_forwarded(
     client: httpx.AsyncClient, deployment: Deployment
 ) -> None:
     with respx.mock(base_url="https://api.openai.com/v1") as router:
-        route = router.post("/chat/completions").mock(return_value=httpx.Response(
-            200,
-            json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
-        ))
+        route = router.post("/chat/completions").mock(
+            return_value=httpx.Response(
+                200,
+                json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+            )
+        )
         request = ChatRequest(
             model="gpt-4o",
             messages=[Message(role=Role.USER, content="x")],
@@ -363,7 +419,12 @@ async def test_gateway_fields_are_not_forwarded(
         await OpenAIProvider(client).chat(request, deployment)
     body = json.loads(route.calls[0].request.content)
     forbidden = {
-        "no_cache", "fallbacks", "routing_strategy", "guardrail_policy",
-        "tags", "metadata", "cache_ttl",
+        "no_cache",
+        "fallbacks",
+        "routing_strategy",
+        "guardrail_policy",
+        "tags",
+        "metadata",
+        "cache_ttl",
     }
     assert forbidden.isdisjoint(body)

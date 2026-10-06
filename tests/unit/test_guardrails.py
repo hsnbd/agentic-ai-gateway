@@ -35,9 +35,7 @@ def test_denylist_respects_word_boundaries() -> None:
 
 
 def test_pii_detects_valid_email_ssn_and_luhn_card() -> None:
-    rule = PiiRule(
-        "pii", ["EMAIL", "SSN", "CREDIT_CARD"], Action.REDACT, Severity.HIGH
-    )
+    rule = PiiRule("pii", ["EMAIL", "SSN", "CREDIT_CARD"], Action.REDACT, Severity.HIGH)
     match = rule.evaluate("a@example.com 123-45-6789 4111 1111 1111 1111")
     assert match is not None
     assert match.match_count == 3
@@ -52,23 +50,16 @@ def test_pii_rejects_invalid_luhn_card_and_ssn_ranges() -> None:
 
 
 def test_pii_redaction_is_type_aware() -> None:
-    rule = PiiRule(
-        "pii", ["EMAIL", "SSN", "CREDIT_CARD"], Action.REDACT, Severity.HIGH
-    )
+    rule = PiiRule("pii", ["EMAIL", "SSN", "CREDIT_CARD"], Action.REDACT, Severity.HIGH)
     redacted = rule.redact("a@example.com 123-45-6789 4111 1111 1111 1111")
     assert redacted == "[EMAIL_REDACTED] [SSN_REDACTED] [CREDIT_CARD_REDACTED]"
 
 
 def test_pii_mask_mode_preserves_last_four_phone_and_card_digits() -> None:
-    rule = PiiRule(
-        "pii", ["PHONE", "CREDIT_CARD"], Action.REDACT, Severity.HIGH, mode="mask"
-    )
+    rule = PiiRule("pii", ["PHONE", "CREDIT_CARD"], Action.REDACT, Severity.HIGH, mode="mask")
     redacted = rule.redact("415-555-2671 4111 1111 1111 1111")
     assert rule.evaluate("Call +442079460958") is not None
-    assert redacted == (
-        "[PHONE_REDACTED:******2671] "
-        "[CREDIT_CARD_REDACTED:************1111]"
-    )
+    assert redacted == ("[PHONE_REDACTED:******2671] [CREDIT_CARD_REDACTED:************1111]")
 
 
 def test_phone_immediately_followed_by_card_redacts_both_without_leftovers() -> None:
@@ -105,9 +96,7 @@ def test_email_with_digit_domain_wins_over_embedded_number_candidates() -> None:
     match = rule.evaluate(text)
     assert match is not None
     assert match.details["entities"] == {"EMAIL": 2, "PHONE": 1}
-    assert rule.redact(text) == (
-        "[EMAIL_REDACTED] [PHONE_REDACTED:******2671] [EMAIL_REDACTED]"
-    )
+    assert rule.redact(text) == ("[EMAIL_REDACTED] [PHONE_REDACTED:******2671] [EMAIL_REDACTED]")
 
 
 def test_resolve_overlaps_tie_break_is_deterministic() -> None:
@@ -182,9 +171,7 @@ async def test_block_match_offsets_refer_to_original_text(tmp_path: Any) -> None
 
 
 def test_length_rule_flags_exceeded_character_limit() -> None:
-    rule = LengthRule(
-        "length", Action.BLOCK, Severity.MEDIUM, max_chars=3, max_messages=1
-    )
+    rule = LengthRule("length", Action.BLOCK, Severity.MEDIUM, max_chars=3, max_messages=1)
     match = rule.evaluate("four", message_count=2)
     assert match is not None
     assert match.details["exceeded"] == {"characters": 4, "messages": 2}
@@ -194,9 +181,7 @@ def test_length_rule_flags_exceeded_character_limit() -> None:
 async def test_unknown_policy_falls_back_to_default(tmp_path: Any) -> None:
     registry = _load_registry(
         tmp_path,
-        "  default:\n"
-        "    input: []\n"
-        "    output: []\n",
+        "  default:\n    input: []\n    output: []\n",
     )
     result = await registry.evaluate("misspelled", "hello", Phase.INPUT)
     assert result.policy == "default"
@@ -343,9 +328,7 @@ def _judge_registry(tmp_path: Any, reply: str | Exception, extra: str = "") -> G
         ('{"score": 0.2, "reason": "fine"}', False),
     ],
 )
-async def test_llm_judge_scores_against_threshold(
-    tmp_path: Any, reply: str, blocked: bool
-) -> None:
+async def test_llm_judge_scores_against_threshold(tmp_path: Any, reply: str, blocked: bool) -> None:
     registry = _judge_registry(tmp_path, reply)
     result = await registry.evaluate("default", "How much ibuprofen?", Phase.INPUT)
     assert result.blocked is blocked

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from app.core.errors import GuardrailViolationError
 from app.core.pipeline import RequestContext
@@ -23,9 +24,7 @@ class InputGuardrailStage:
     async def process(self, ctx: RequestContext) -> None:
         policy = ctx.request.guardrail_policy or "default"
         messages = [
-            message
-            for message in ctx.request.messages
-            if message.role in {Role.USER, Role.SYSTEM}
+            message for message in ctx.request.messages if message.role in {Role.USER, Role.SYSTEM}
         ]
         text = "\n".join(message.text() for message in messages)
         result = await self.registry.evaluate(
@@ -123,15 +122,27 @@ def _record_result(ctx: RequestContext, key: str, result: GuardrailResult) -> No
 
 
 async def _persist_violations(ctx: RequestContext, result: GuardrailResult) -> None:
+    await persist_violations(ctx.state.db, result, request_id=ctx.request_id, key_id=ctx.key_id)
+
+
+async def persist_violations(
+    db: Any,
+    result: GuardrailResult,
+    *,
+    request_id: str | None,
+    key_id: str | None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Record each match; ``details`` (e.g. the tool it came from) is merged into every row."""
     if not result.matches:
         return
     try:
-        async with ctx.state.db.session() as session:
+        async with db.session() as session:
             for match in result.matches:
                 session.add(
                     GuardrailViolation(
-                        request_id=ctx.request_id,
-                        virtual_key_id=ctx.key_id,
+                        request_id=request_id or "",
+                        virtual_key_id=key_id,
                         policy=result.policy,
                         rule=match.rule_name,
                         phase=result.phase.value,
@@ -139,8 +150,8 @@ async def _persist_violations(ctx: RequestContext, result: GuardrailResult) -> N
                         severity=match.severity.value,
                         match_count=match.match_count,
                         excerpt=match.excerpt,
-                        details=match.details,
+                        details={**match.details, **(details or {})},
                     )
                 )
     except Exception:
-        logger.exception("Could not persist guardrail violations for request %s", ctx.request_id)
+        logger.exception("Could not persist guardrail violations for request %s", request_id)

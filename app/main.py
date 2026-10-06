@@ -113,9 +113,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
         headers: dict[str, str] = {}
         if exc.retry_after is not None:
             headers["Retry-After"] = retry_after_header(exc.retry_after)
-        return JSONResponse(
-            status_code=exc.status_code, content=exc.to_dict(), headers=headers
-        )
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict(), headers=headers)
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:

@@ -67,9 +67,7 @@ def test_stream_returns_an_async_iterator_without_awaiting(
     request = ChatRequest(model="m", messages=[Message(role=Role.USER, content="hi")])
     result = provider.stream(request, _deployment(cls.name))
 
-    assert isinstance(result, AsyncIterator), (
-        f"{cls.name}.stream must return an AsyncIterator"
-    )
+    assert isinstance(result, AsyncIterator), f"{cls.name}.stream must return an AsyncIterator"
     assert hasattr(result, "__anext__")
 
 

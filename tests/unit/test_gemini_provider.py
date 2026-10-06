@@ -69,9 +69,7 @@ async def test_chat_translates_system_role_and_function_schema(
                             description="Look up a value",
                             parameters={
                                 "type": "object",
-                                "properties": {
-                                    "query": {"type": "string", "$ref": "#/defs/query"}
-                                },
+                                "properties": {"query": {"type": "string", "$ref": "#/defs/query"}},
                                 "additionalProperties": False,
                                 "$schema": "draft-07",
                                 "$defs": {"query": {"type": "string"}},
@@ -127,12 +125,14 @@ async def test_chat_tool_call_response_has_tool_finish_reason(deployment: Deploy
             return_value=httpx.Response(
                 200,
                 json={
-                    "candidates": [{
-                        "content": {"parts": [{
-                            "functionCall": {"name": "lookup", "args": {"id": 7}}
-                        }]},
-                        "finishReason": "STOP",
-                    }],
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [{"functionCall": {"name": "lookup", "args": {"id": 7}}}]
+                            },
+                            "finishReason": "STOP",
+                        }
+                    ],
                     "usageMetadata": {
                         "promptTokenCount": 4,
                         "candidatesTokenCount": 2,
@@ -145,7 +145,9 @@ async def test_chat_tool_call_response_has_tool_finish_reason(deployment: Deploy
         provider, client = make_provider()
         try:
             result = await provider.chat(
-                ChatRequest(model="gemini-2-flash", messages=[Message(role=Role.USER, content="go")]),
+                ChatRequest(
+                    model="gemini-2-flash", messages=[Message(role=Role.USER, content="go")]
+                ),
                 deployment,
             )
         finally:
@@ -168,9 +170,10 @@ async def test_tool_result_resolves_name_from_prior_call(deployment: Deployment)
             request = ChatRequest(
                 model="gemini-2-flash",
                 messages=[
-                    Message(role=Role.ASSISTANT, tool_calls=[
-                        ToolCall(id="call-1", name="search", arguments='{"term":"x"}')
-                    ]),
+                    Message(
+                        role=Role.ASSISTANT,
+                        tool_calls=[ToolCall(id="call-1", name="search", arguments='{"term":"x"}')],
+                    ),
                     Message(role=Role.TOOL, tool_call_id="call-1", content="found"),
                 ],
             )
@@ -180,9 +183,10 @@ async def test_tool_result_resolves_name_from_prior_call(deployment: Deployment)
     payload = json.loads(route.calls[0].request.content)
     assert payload["contents"] == [
         {"role": "model", "parts": [{"functionCall": {"name": "search", "args": {"term": "x"}}}]},
-        {"role": "user", "parts": [{
-            "functionResponse": {"name": "search", "response": {"result": "found"}}
-        }]},
+        {
+            "role": "user",
+            "parts": [{"functionResponse": {"name": "search", "response": {"result": "found"}}}],
+        },
     ]
 
 
@@ -194,13 +198,18 @@ async def test_stream_yields_text_deltas_and_final_usage(deployment: Deployment)
     )
     with respx.mock(assert_all_called=True) as router:
         router.post(STREAM_URL).mock(
-            return_value=httpx.Response(200, headers={"content-type": "text/event-stream"}, text=body)
+            return_value=httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, text=body
+            )
         )
         provider, client = make_provider()
         try:
             chunks = [
-                chunk async for chunk in provider.stream(
-                    ChatRequest(model="gemini-2-flash", messages=[Message(role=Role.USER, content="hi")]),
+                chunk
+                async for chunk in provider.stream(
+                    ChatRequest(
+                        model="gemini-2-flash", messages=[Message(role=Role.USER, content="hi")]
+                    ),
                     deployment,
                 )
             ]
@@ -243,9 +252,7 @@ async def test_embeddings_preserve_input_order_and_send_dimensions(
     ("status", "code"),
     [(429, ErrorCode.PROVIDER_RATE_LIMIT), (503, ErrorCode.PROVIDER_UNAVAILABLE)],
 )
-async def test_chat_maps_http_errors(
-    deployment: Deployment, status: int, code: ErrorCode
-) -> None:
+async def test_chat_maps_http_errors(deployment: Deployment, status: int, code: ErrorCode) -> None:
     with respx.mock(assert_all_called=True) as router:
         router.post(CHAT_URL).mock(return_value=httpx.Response(status, json={"error": "failure"}))
         provider, client = make_provider()

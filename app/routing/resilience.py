@@ -265,9 +265,7 @@ class ResilientExecutor:
                 ctx.routing.candidates_rejected[deployment.id] = "rate limited"
         return error
 
-    def _exhausted(
-        self, ctx: RequestContext, last_error: GatewayError | None
-    ) -> GatewayError:
+    def _exhausted(self, ctx: RequestContext, last_error: GatewayError | None) -> GatewayError:
         if isinstance(last_error, RateLimitExceededError) and all(
             isinstance(error, RateLimitExceededError) for error in ctx.errors
         ):
@@ -275,9 +273,7 @@ class ResilientExecutor:
             # can act on, not a provider failure.
             return last_error
         if last_error is None:
-            return NoHealthyDeploymentError(
-                f"No deployment available for {ctx.request.model!r}"
-            )
+            return NoHealthyDeploymentError(f"No deployment available for {ctx.request.model!r}")
         return AllProvidersFailedError(
             f"All providers failed for {ctx.request.model!r}: {last_error.message}",
             provider=last_error.provider,

@@ -159,20 +159,31 @@ class TestRagIngestionVariants:
         collection_id = self._collection(client, auth_headers)
         url = f"/v1/rag/collections/{collection_id}/documents"
         cases = [
-            ({"files": {"note": (None, "no file here")}}, "requires a file field"),
-            ({"files": {"file": ("doc.pdf", b"%PDF", "application/pdf")}}, "Only .txt and .md"),
+            ({"files": {"note": (None, "no file here")}}, 400, "requires a file field"),
+            (
+                {"files": {"file": ("tool.exe", b"MZ", "application/octet-stream")}},
+                415,
+                "Cannot ingest .exe",
+            ),
+            (
+                {"files": {"file": ("doc.pdf", b"%PDF", "application/pdf")}},
+                422,
+                "Could not read the PDF",
+            ),
             (
                 {"files": {"file": ("a.md", b"# A", "text/markdown")}, "data": {"metadata": "{"}},
+                400,
                 "valid JSON",
             ),
             (
                 {"files": {"file": ("a.md", b"# A", "text/markdown")}, "data": {"metadata": "[1]"}},
+                400,
                 "JSON object",
             ),
         ]
-        for kwargs, message in cases:
+        for kwargs, status, message in cases:
             response = client.post(url, headers=auth_headers, **kwargs)
-            assert response.status_code == 400, response.text
+            assert response.status_code == status, response.text
             assert message in response.json()["error"]["message"]
 
         ok = client.post(

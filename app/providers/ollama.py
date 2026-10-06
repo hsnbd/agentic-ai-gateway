@@ -66,9 +66,7 @@ class OllamaProvider(Provider):
                 arguments = json.loads(call.arguments or "{}")
                 if not isinstance(arguments, dict):
                     raise ValueError("Ollama tool call arguments must be a JSON object")
-                tool_calls.append(
-                    {"function": {"name": call.name, "arguments": arguments}}
-                )
+                tool_calls.append({"function": {"name": call.name, "arguments": arguments}})
             payload["tool_calls"] = tool_calls
         return payload
 
@@ -134,9 +132,7 @@ class OllamaProvider(Provider):
         return calls
 
     @staticmethod
-    def _raise_mapped(
-        exc: Exception, deployment: Deployment, provider: OllamaProvider
-    ) -> NoReturn:
+    def _raise_mapped(exc: Exception, deployment: Deployment, provider: OllamaProvider) -> NoReturn:
         mapped = provider.map_error(exc, deployment)
         if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404:
             detail = provider._extract_error_message(exc.response)
@@ -228,9 +224,7 @@ class OllamaProvider(Provider):
         except Exception as exc:
             self._raise_mapped(exc, deployment, self)
 
-    async def embed(
-        self, request: EmbeddingRequest, deployment: Deployment
-    ) -> EmbeddingResponse:
+    async def embed(self, request: EmbeddingRequest, deployment: Deployment) -> EmbeddingResponse:
         url = f"{self._base_url(deployment)}/api/embed"
         try:
             response = await self._client.post(

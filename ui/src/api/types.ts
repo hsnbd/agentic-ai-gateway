@@ -13,7 +13,7 @@ export interface VirtualKey {
   id: string; key_prefix: string; name: string; team_id: string | null; max_budget_usd: number | null;
   spend_usd: number; budget_duration: string; rpm_limit: number | null; tpm_limit: number | null;
   max_parallel_requests: number | null; allowed_models: string[]; blocked_models: string[];
-  guardrail_policy: string | null; allowed_routes: string[]; enabled: boolean; expires_at: string | null;
+  guardrail_policy: string | null; allowed_routes: string[]; allowed_mcp_servers: string[]; allowed_tools: string[]; enabled: boolean; expires_at: string | null;
   last_used_at: string | null; metadata: Record<string, unknown>; created_at: string; updated_at: string; key?: string | null;
 }
 export interface Model { name: string; capabilities: Record<string, unknown>; pricing: Record<string, number | null>; deployments: string[] }
@@ -34,7 +34,7 @@ export interface KeyCreateRequest {
   name: string; team_id?: string | null; max_budget_usd?: number | null; budget_duration?: string;
   rpm_limit?: number | null; tpm_limit?: number | null; max_parallel_requests?: number | null;
   allowed_models?: string[]; blocked_models?: string[]; guardrail_policy?: string | null;
-  allowed_routes?: string[]; expires_at?: string | null; enabled?: boolean; metadata?: Record<string, unknown>;
+  allowed_routes?: string[]; allowed_mcp_servers?: string[]; allowed_tools?: string[]; expires_at?: string | null; enabled?: boolean; metadata?: Record<string, unknown>;
 }
 export interface Team {
   id: string; name: string; description: string | null; max_budget_usd: number | null; spend_usd: number;

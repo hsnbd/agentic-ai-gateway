@@ -48,6 +48,8 @@ class ResolvedKey:
     guardrail_policy: str | None
     max_parallel_requests: int | None = None
     allowed_routes: list[str] = field(default_factory=list)
+    allowed_mcp_servers: list[str] = field(default_factory=list)
+    allowed_tools: list[str] = field(default_factory=list)
 
     def is_valid(self, now: datetime | None = None) -> bool:
         now = now or datetime.now(UTC)
@@ -83,6 +85,8 @@ def _resolved_from_row(row: VirtualKey) -> ResolvedKey:
         guardrail_policy=row.guardrail_policy,
         max_parallel_requests=row.max_parallel_requests,
         allowed_routes=list(row.allowed_routes or []),
+        allowed_mcp_servers=list(row.allowed_mcp_servers or []),
+        allowed_tools=list(row.allowed_tools or []),
     )
 
 
@@ -101,6 +105,8 @@ def _serialize_key(key: ResolvedKey) -> str:
         "guardrail_policy": key.guardrail_policy,
         "max_parallel_requests": key.max_parallel_requests,
         "allowed_routes": key.allowed_routes,
+        "allowed_mcp_servers": key.allowed_mcp_servers,
+        "allowed_tools": key.allowed_tools,
     }
     return json.dumps(data, separators=(",", ":"))
 
@@ -128,6 +134,8 @@ def _deserialize_key(snapshot: str | bytes) -> ResolvedKey:
         # .get: snapshots cached before these fields existed stay readable.
         max_parallel_requests=data.get("max_parallel_requests"),
         allowed_routes=data.get("allowed_routes") or [],
+        allowed_mcp_servers=data.get("allowed_mcp_servers") or [],
+        allowed_tools=data.get("allowed_tools") or [],
     )
 
 
@@ -245,10 +253,25 @@ class KeyService:
 
     async def update_key(self, key_id: str, **fields: Any) -> VirtualKey:
         allowed = {
-            "name", "team_id", "max_budget_usd", "spend_usd", "budget_period",
-            "budget_reset_at", "rpm_limit", "tpm_limit", "max_parallel_requests",
-            "allowed_models", "blocked_models", "guardrail_policy", "allowed_routes",
-            "is_active", "expires_at", "metadata", "metadata_",
+            "name",
+            "team_id",
+            "max_budget_usd",
+            "spend_usd",
+            "budget_period",
+            "budget_reset_at",
+            "rpm_limit",
+            "tpm_limit",
+            "max_parallel_requests",
+            "allowed_models",
+            "blocked_models",
+            "guardrail_policy",
+            "allowed_routes",
+            "allowed_mcp_servers",
+            "allowed_tools",
+            "is_active",
+            "expires_at",
+            "metadata",
+            "metadata_",
         }
         unknown = fields.keys() - allowed
         if unknown:

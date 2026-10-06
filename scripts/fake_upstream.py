@@ -64,9 +64,7 @@ def _prompt_of(payload: dict[str, Any]) -> str:
             if isinstance(content, str):
                 return content
             if isinstance(content, list):
-                return " ".join(
-                    part.get("text", "") for part in content if isinstance(part, dict)
-                )
+                return " ".join(part.get("text", "") for part in content if isinstance(part, dict))
     return ""
 
 
@@ -213,9 +211,7 @@ async def chat_completions(request: Request) -> Any:
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
-                "choices": [
-                    {"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}
-                ],
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
             }
             yield f"data: {json.dumps(first)}\n\n"
             if tool_calls:
@@ -401,43 +397,69 @@ async def anthropic_messages(request: Request) -> Any:
     if payload.get("stream"):
 
         async def event_stream() -> Any:
-            yield _sse("message_start", {
-                "type": "message_start",
-                "message": {
-                    "id": message_id, "type": "message", "role": "assistant", "model": model,
-                    "content": [], "stop_reason": None,
-                    "usage": {"input_tokens": usage["prompt_tokens"], "output_tokens": 0},
-                },
-            })
-            if tool_block is not None:
-                yield _sse("content_block_start", {
-                    "type": "content_block_start", "index": 0,
-                    "content_block": {**tool_block, "input": {}},
-                })
-                yield _sse("content_block_delta", {
-                    "type": "content_block_delta", "index": 0,
-                    "delta": {
-                        "type": "input_json_delta",
-                        "partial_json": json.dumps(tool_input),
+            yield _sse(
+                "message_start",
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": message_id,
+                        "type": "message",
+                        "role": "assistant",
+                        "model": model,
+                        "content": [],
+                        "stop_reason": None,
+                        "usage": {"input_tokens": usage["prompt_tokens"], "output_tokens": 0},
                     },
-                })
+                },
+            )
+            if tool_block is not None:
+                yield _sse(
+                    "content_block_start",
+                    {
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {**tool_block, "input": {}},
+                    },
+                )
+                yield _sse(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": json.dumps(tool_input),
+                        },
+                    },
+                )
             else:
-                yield _sse("content_block_start", {
-                    "type": "content_block_start", "index": 0,
-                    "content_block": {"type": "text", "text": ""},
-                })
+                yield _sse(
+                    "content_block_start",
+                    {
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {"type": "text", "text": ""},
+                    },
+                )
                 for word in answer.split(" "):
-                    yield _sse("content_block_delta", {
-                        "type": "content_block_delta", "index": 0,
-                        "delta": {"type": "text_delta", "text": word + " "},
-                    })
+                    yield _sse(
+                        "content_block_delta",
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": word + " "},
+                        },
+                    )
                     await asyncio.sleep(0.005)
             yield _sse("content_block_stop", {"type": "content_block_stop", "index": 0})
-            yield _sse("message_delta", {
-                "type": "message_delta",
-                "delta": {"stop_reason": stop_reason},
-                "usage": {"output_tokens": usage["completion_tokens"]},
-            })
+            yield _sse(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop_reason},
+                    "usage": {"output_tokens": usage["completion_tokens"]},
+                },
+            )
             yield _sse("message_stop", {"type": "message_stop"})
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -573,8 +595,12 @@ async def ollama_chat(request: Request) -> Any:
     tool_result = _tool_result(payload)
     answer = _answer(prompt) if tool_result is None else f"Tool result: {tool_result[:180]}"
     tool_calls = [
-        {"function": {"name": call["function"]["name"],
-                      "arguments": json.loads(call["function"]["arguments"])}}
+        {
+            "function": {
+                "name": call["function"]["name"],
+                "arguments": json.loads(call["function"]["arguments"]),
+            }
+        }
         for call in _tool_calls(prompt, payload)
     ]
     model = payload.get("model", "llama3.2")

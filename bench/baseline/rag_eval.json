@@ -1,0 +1,51 @@
+{
+  "dataset": "rag_eval.json",
+  "documents": 24,
+  "questions": 48,
+  "top_k": 5,
+  "vector": {
+    "recall_at_1": 0.625,
+    "recall_at_5": 0.8542,
+    "mrr": 0.7101,
+    "ndcg_at_5": 0.746,
+    "latency_p50_ms": 3.47,
+    "latency_p95_ms": 6.59,
+    "by_kind": {
+      "keyword": {
+        "recall_at_1": 0.7273,
+        "recall_at_5": 0.9545,
+        "mrr": 0.8182,
+        "ndcg_at_5": 0.8525
+      },
+      "paraphrase": {
+        "recall_at_1": 0.5385,
+        "recall_at_5": 0.7692,
+        "mrr": 0.6186,
+        "ndcg_at_5": 0.6559
+      }
+    }
+  },
+  "hybrid": {
+    "recall_at_1": 0.8333,
+    "recall_at_5": 0.9792,
+    "mrr": 0.8941,
+    "ndcg_at_5": 0.9157,
+    "latency_p50_ms": 5.07,
+    "latency_p95_ms": 8.44,
+    "by_kind": {
+      "keyword": {
+        "recall_at_1": 0.9091,
+        "recall_at_5": 1.0,
+        "mrr": 0.9545,
+        "ndcg_at_5": 0.9664
+      },
+      "paraphrase": {
+        "recall_at_1": 0.7692,
+        "recall_at_5": 0.9615,
+        "mrr": 0.8429,
+        "ndcg_at_5": 0.8728
+      }
+    }
+  },
+  "passed": true
+}

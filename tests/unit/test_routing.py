@@ -119,9 +119,7 @@ class FakeProvider:
 
 
 class FakeRegistry:
-    def __init__(
-        self, deployments: list[Deployment], providers: dict[str, FakeProvider]
-    ) -> None:
+    def __init__(self, deployments: list[Deployment], providers: dict[str, FakeProvider]) -> None:
         self._deployments = deployments
         self._providers = providers
 
@@ -221,9 +219,7 @@ def test_latency_ewma_tracks_recent_samples() -> None:
 def test_least_cost_picks_cheapest() -> None:
     cheap = make_deployment("cheap", input_price=0.15, output_price=0.6)
     pricey = make_deployment("pricey", input_price=5.0, output_price=15.0)
-    chosen, reason = LeastCostStrategy().select(
-        [pricey, cheap], make_request(), CircuitBreaker()
-    )
+    chosen, reason = LeastCostStrategy().select([pricey, cheap], make_request(), CircuitBreaker())
     assert chosen.id == "cheap"
     assert "cheapest" in reason
 
@@ -299,7 +295,8 @@ def test_conditional_routes_long_prompts_to_large_context() -> None:
     long_prompt = "word " * 20000  # ~25k estimated tokens
 
     chosen, reason = ConditionalStrategy().select(
-        [small, large], make_request(messages=[Message(role=Role.USER, content=long_prompt)]),
+        [small, large],
+        make_request(messages=[Message(role=Role.USER, content=long_prompt)]),
         CircuitBreaker(),
     )
     assert chosen.id == "large"
@@ -313,9 +310,7 @@ def test_conditional_routes_tool_requests_to_tool_capable() -> None:
     request = make_request(
         tools=[ToolDef(function=FunctionDef(name="get_weather", parameters={"type": "object"}))]
     )
-    chosen, reason = ConditionalStrategy().select(
-        [no_tools, with_tools], request, CircuitBreaker()
-    )
+    chosen, reason = ConditionalStrategy().select([no_tools, with_tools], request, CircuitBreaker())
     assert chosen.id == "with_tools"
     assert "tool" in reason
 
@@ -369,9 +364,7 @@ def test_router_filters_by_capability() -> None:
     router = Router(registry, CircuitBreaker())  # type: ignore[arg-type]
 
     ctx = make_ctx(
-        make_request(
-            tools=[ToolDef(function=FunctionDef(name="f", parameters={"type": "object"}))]
-        )
+        make_request(tools=[ToolDef(function=FunctionDef(name="f", parameters={"type": "object"}))])
     )
     decision, chain = router.route(ctx)
     assert [d.id for d in chain] == ["with_tools"]
@@ -550,9 +543,7 @@ async def test_falls_back_to_next_deployment_after_retries_exhaust() -> None:
     failing = FakeProvider("openai", [retryable(), retryable(), retryable()])
     working = FakeProvider("anthropic", [])
 
-    executor = build_executor(
-        [primary, backup], {"openai": failing, "anthropic": working}
-    )
+    executor = build_executor([primary, backup], {"openai": failing, "anthropic": working})
     ctx = make_ctx()
     response = await executor.execute(ctx)
 
@@ -616,9 +607,7 @@ async def test_breaker_opens_after_repeated_executor_failures() -> None:
 
 
 async def test_max_fallbacks_bounds_the_chain() -> None:
-    deployments = [
-        make_deployment(f"d{i}", provider=f"p{i}", priority=i) for i in range(6)
-    ]
+    deployments = [make_deployment(f"d{i}", provider=f"p{i}", priority=i) for i in range(6)]
     providers = {f"p{i}": FakeProvider(f"p{i}", [retryable()] * 3) for i in range(6)}
     breaker = CircuitBreaker()
     registry = FakeRegistry(deployments, providers)

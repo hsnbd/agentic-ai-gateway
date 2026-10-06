@@ -40,6 +40,26 @@ export interface McpTool {
   function: McpFunction;
 }
 
+export interface ToolCallLog {
+  id: string;
+  created_at: string;
+  request_id: string | null;
+  virtual_key_id: string | null;
+  team_id: string | null;
+  source: 'agent' | 'direct';
+  server_id: string | null;
+  tool: string;
+  status: string;
+  duration_ms: number;
+  arguments_hash: string | null;
+  result_chars: number;
+  truncated: boolean;
+  guardrail: string | null;
+  error: string | null;
+}
+
+export interface ToolCallLogPage { items: ToolCallLog[]; total: number; limit: number; offset: number }
+
 export interface McpToolCallResponse {
   message: Record<string, unknown>;
 }
@@ -48,6 +68,7 @@ export const mcpKeys = {
   all: ['mcp'] as const,
   servers: ['mcp', 'servers'] as const,
   tools: (serverId: string | undefined) => ['mcp', 'tools', serverId ?? 'all'] as const,
+  toolCalls: (status: string, offset: number) => ['mcp', 'tool-calls', status, offset] as const,
 };
 
 export function useMcpServers() {
@@ -67,5 +88,16 @@ export function useMcpTools(serverId: string | undefined) {
     queryFn: () => apiRequest<McpTool[]>(`/v1/mcp/tools${suffix}`),
     enabled: Boolean(serverId),
     staleTime: 15_000,
+  });
+}
+
+/** The tool-call audit log (console users only), optionally filtered by status. */
+export function useToolCalls(status: string, limit = 25, offset = 0) {
+  const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (status) query.set('status', status);
+  return useQuery({
+    queryKey: mcpKeys.toolCalls(status, offset),
+    queryFn: () => apiRequest<ToolCallLogPage>(`/admin/api/tool-calls?${query.toString()}`),
+    staleTime: 10_000,
   });
 }

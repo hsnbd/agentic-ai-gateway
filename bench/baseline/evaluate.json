@@ -1,0 +1,106 @@
+{
+  "success_rate_latency_cost": {
+    "findings": {
+      "requests": 50,
+      "concurrency": 5,
+      "succeeded": 50,
+      "failed": 0,
+      "success_rate": 1.0,
+      "wall_clock_s": 0.198,
+      "throughput_rps": 252.4,
+      "latency_p50_s": 0.012,
+      "latency_p95_s": 0.06,
+      "latency_p99_s": 0.096,
+      "latency_mean_s": 0.02,
+      "prompt_tokens": 650,
+      "completion_tokens": 790,
+      "total_tokens": 1440,
+      "total_cost_usd": 0.009525,
+      "cost_per_successful_request_usd": 0.000191
+    },
+    "notes": []
+  },
+  "streaming_time_to_first_token": {
+    "findings": {
+      "samples": 5,
+      "succeeded": 5,
+      "ttft_p50_s": 0.006,
+      "ttft_p95_s": 0.031
+    },
+    "notes": []
+  },
+  "cache_hit_ratio": {
+    "findings": {
+      "seed_was_hit": false,
+      "followups": 6,
+      "hits": 3,
+      "hit_ratio": 0.5,
+      "unrelated_prompt_hit": false
+    },
+    "notes": []
+  },
+  "provider_failover": {
+    "findings": {
+      "baseline_ok": true,
+      "baseline_served_by": "openai/eval-router",
+      "unknown_model_rejected": true,
+      "unknown_model_status": 404,
+      "failover_model": "eval-chat",
+      "failover_request_ok": true,
+      "failover_status": 200,
+      "served_by": "openai/eval-chat#2",
+      "recovered_from_dead_primary": true
+    },
+    "notes": []
+  },
+  "routing_effectiveness": {
+    "findings": {
+      "selection_by_strategy": {
+        "least-cost": "openai/eval-router#2",
+        "lowest-latency": "openai/eval-router#2",
+        "priority": "openai/eval-router",
+        "weighted": "openai/eval-router"
+      }
+    },
+    "notes": []
+  },
+  "guardrail_effectiveness": {
+    "findings": {
+      "benign_allowed": true,
+      "benign_status": 200,
+      "pii_status": 200,
+      "pii_blocked_or_redacted": true
+    },
+    "notes": []
+  },
+  "capability_surface": {
+    "findings": {
+      "endpoint_status": {
+        "models": 200,
+        "rag_collections": 200,
+        "mcp_servers": 200,
+        "mcp_tools": 200,
+        "metrics": 200,
+        "console": 307
+      },
+      "tool_calling_request_accepted": true
+    },
+    "notes": []
+  },
+  "agentic_tool_calls": {
+    "findings": {
+      "measured": true,
+      "samples": 5,
+      "tool_loop_success_rate": 1.0,
+      "tool_calls_per_request": 1,
+      "stop_reasons": {
+        "completed": 5
+      },
+      "max_iterations_rate": 0.0,
+      "latency_p50_s": 0.007,
+      "latency_p95_s": 0.009,
+      "latency_per_hop_s": 0.004
+    },
+    "notes": []
+  }
+}

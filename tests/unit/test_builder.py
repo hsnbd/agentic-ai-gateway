@@ -187,28 +187,28 @@ def _deployment(id: str, priority: int, chat: bool = True) -> Any:
     return SimpleNamespace(id=id, priority=priority, capabilities=SimpleNamespace(chat=chat))
 
 
-async def test_judge_client_fails_over_in_priority_order() -> None:
-    from app.core.builder import _judge_client
+async def testdirect_model_caller_fails_over_in_priority_order() -> None:
+    from app.core.builder import direct_model_caller
 
     broken, working = _JudgeProvider(None), _JudgeProvider('{"score": 0}')
     registry = _JudgeRegistry(
         [_deployment("second", 2), _deployment("embed", 0, chat=False), _deployment("first", 1)],
         {"first": broken, "second": working},
     )
-    judge = _judge_client(SimpleNamespace(registry=registry))  # type: ignore[arg-type]
+    judge = direct_model_caller(SimpleNamespace(registry=registry))  # type: ignore[arg-type]
     assert await judge("judge-model", "instructions", "text") == '{"score": 0}'
     assert broken.calls == 1 and working.calls == 1
 
 
-async def test_judge_client_raises_last_error() -> None:
-    from app.core.builder import _judge_client
+async def testdirect_model_caller_raises_last_error() -> None:
+    from app.core.builder import direct_model_caller
     from app.core.errors import NoHealthyDeploymentError
 
-    no_deployments = _judge_client(SimpleNamespace(registry=_JudgeRegistry([], {})))  # type: ignore[arg-type]
+    no_deployments = direct_model_caller(SimpleNamespace(registry=_JudgeRegistry([], {})))  # type: ignore[arg-type]
     with pytest.raises(NoHealthyDeploymentError):
         await no_deployments("judge-model", "i", "t")
 
-    failing = _judge_client(
+    failing = direct_model_caller(
         SimpleNamespace(  # type: ignore[arg-type]
             registry=_JudgeRegistry([_deployment("only", 1)], {"only": _JudgeProvider(None)})
         )

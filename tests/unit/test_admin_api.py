@@ -351,7 +351,9 @@ def test_log_attempt_details_and_summary_fields_are_exposed(admin_api: Any) -> N
             )
 
     asyncio.run(seed())
-    headers = {"Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"}
+    headers = {
+        "Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"
+    }
     listing = client.get("/admin/api/logs", headers=headers)
     assert listing.status_code == 200, listing.text
     item = listing.json()["items"][0]
@@ -406,16 +408,12 @@ def test_log_bodies_are_redacted_by_default_and_reveal_is_admin_only(admin_api: 
     assert forbidden_reveal.status_code == 403
     assert "sensitive prompt text" not in forbidden_reveal.text
 
-    default_admin_result = client.get(
-        "/admin/api/logs/sensitive-request", headers=admin_headers
-    )
+    default_admin_result = client.get("/admin/api/logs/sensitive-request", headers=admin_headers)
     assert default_admin_result.status_code == 200, default_admin_result.text
     assert default_admin_result.json()["body_redacted"] is True
     assert default_admin_result.json()["request_body"] is None
 
-    revealed = client.get(
-        "/admin/api/logs/sensitive-request?reveal=true", headers=admin_headers
-    )
+    revealed = client.get("/admin/api/logs/sensitive-request?reveal=true", headers=admin_headers)
     assert revealed.status_code == 200, revealed.text
     assert revealed.json()["request_body"] == stored_request
     assert revealed.json()["response_body"] == stored_response
@@ -466,7 +464,9 @@ def test_usage_can_group_by_day(admin_api: Any) -> None:
             )
 
     asyncio.run(seed())
-    headers = {"Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"}
+    headers = {
+        "Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"
+    }
     response = client.get("/admin/api/usage?group_by=day", headers=headers)
     assert response.status_code == 200, response.text
     assert response.json()["group_by"] == "day"
@@ -494,7 +494,9 @@ def test_cache_entry_inspector_and_namespace_invalidation(admin_api: Any) -> Non
             },
         }
     )
-    headers = {"Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"}
+    headers = {
+        "Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"
+    }
     listing = client.get("/admin/api/cache/entries?limit=1", headers=headers)
     assert listing.status_code == 200, listing.text
     assert listing.json()["total"] == 2
@@ -520,11 +522,16 @@ def test_cache_entry_inspector_and_namespace_invalidation(admin_api: Any) -> Non
 
 def test_cache_stats_report_threshold_and_explicit_unavailable_metrics(admin_api: Any) -> None:
     client, _, _ = admin_api
-    headers = {"Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"}
+    headers = {
+        "Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"
+    }
     response = client.get("/admin/api/cache/stats", headers=headers)
     assert response.status_code == 200, response.text
     stats = response.json()
-    assert stats["similarity_threshold"] == client.app.state.gateway.settings.cache_similarity_threshold
+    assert (
+        stats["similarity_threshold"]
+        == client.app.state.gateway.settings.cache_similarity_threshold
+    )
     assert stats["index_size_bytes"] == 2 * 1024 * 1024
     assert stats["estimated_latency_saved_ms"] is None
 
@@ -563,7 +570,9 @@ def test_dashboard_summary_includes_previous_window_and_failovers(admin_api: Any
             )
 
     asyncio.run(seed())
-    headers = {"Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"}
+    headers = {
+        "Authorization": f"Bearer {token(client, 'admin@example.test', 'correct-horse-battery')}"
+    }
     response = client.get("/admin/api/dashboard/summary?window=24h", headers=headers)
     assert response.status_code == 200, response.text
     summary = response.json()

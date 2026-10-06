@@ -79,6 +79,24 @@ laptop with only Ollama running is a valid deployment.
 |---|---|---|
 | `MCP_TIMEOUT_SECONDS` | `10.0` | Per-request timeout when talking to an MCP server |
 | `MCP_TOOL_CACHE_TTL_SECONDS` | `300.0` | How long discovered tool lists are reused |
+| `MCP_HEALTH_INTERVAL_SECONDS` | `60.0` | Re-check every server this often; `0` disables background checks |
+| `MCP_MAX_RESULT_CHARS` | `20000` | Tool results longer than this are truncated before the model sees them |
+| `SECRETS_ENCRYPTION_KEY` | — | Encrypts stored MCP `env` and `headers` values. Comma-separated: the first key encrypts, all decrypt (rotation). Existing plaintext rows are encrypted on first start with a key |
+
+A server's `timeout_seconds` overrides `MCP_TIMEOUT_SECONDS` for that server. Each server also has a circuit breaker (same thresholds as deployments): after repeated transport failures its tool calls fail fast until it recovers.
+
+### RAG
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RAG_EMBEDDING_MODEL` / `RAG_EMBEDDING_DIMENSIONS` | `nomic-embed-text` / `768` | Default embedding for new collections |
+| `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` | `1000` / `150` | Default chunking for new collections |
+| `RAG_DEFAULT_TOP_K` | `5` | Chunks retrieved when a request does not say |
+| `RAG_MAX_DOCUMENT_BYTES` | `10000000` | Larger documents (after text extraction) are refused with 413 |
+| `RAG_BACKGROUND_INGEST_BYTES` | `200000` | Documents at least this large are ingested in the background: the upload returns 202 with status `processing` |
+| `RAG_INGEST_CONCURRENCY` | `2` | Background ingestions that embed at once |
+
+Collections belong to the team (or key) that created them; see the user manual. PDF and Word ingestion needs the `rag-docs` extra (`pip install 'aigateway[rag-docs]'`), which the Docker image includes.
 
 ### Cache
 
@@ -158,6 +176,8 @@ models:
 
 ## `config/guardrails.yaml`
 
+A policy with `apply_to_tools: true` also screens MCP tool traffic: input rules check tool arguments before the server sees them, output rules check results before the model does. The shipped `default` and `strict` policies enable it.
+
 Named policies, each with input and output rules. A `default` policy is required.
 Virtual keys may bind to a specific policy.
 
@@ -224,7 +244,7 @@ the gateway and never forwarded upstream:
 | `routing_strategy` | Override the strategy for this request |
 | `guardrail_policy` | Use a named policy |
 | `tags` | Labels recorded in the request log. With `routing_strategy: conditional`, deployments whose `tags` share one with the request are preferred (cheapest first) |
-| `rag` | Ground the request in a RAG collection: `{"collection_id": ..., "top_k": 5, "min_score": 0, "mode": "system" \| "user", "max_context_tokens": 4000, "filters": {...}}`. Sources come back in `aigw.sources` and `X-Gateway-RAG-Sources` |
+| `rag` | Ground the request in a RAG collection: `{"collection_id": ..., "top_k": 5, "min_score": 0, "mode": "system" \| "user", "search_mode": "vector" \| "hybrid", "rerank_model": null, "max_context_tokens": 4000, "filters": {...}}`. `search_mode: hybrid` adds keyword (BM25) search fused by rank; `rerank_model` has a chat model reorder the candidates. Sources come back in `aigw.sources` and `X-Gateway-RAG-Sources` |
 | `mcp` | Let the gateway run MCP tools for this request: `{"servers": [ids] \| null, "max_iterations": 8}`. See [Agent & SDK setup](./agents.md#server-side-rag-and-tools) |
 
 Every field can also be nested under `aigw` (e.g. OpenAI SDK

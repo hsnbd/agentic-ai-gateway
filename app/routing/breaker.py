@@ -105,10 +105,7 @@ class CircuitBreaker:
 
         # A failed half-open probe re-opens immediately, without waiting for
         # the threshold to be reached again.
-        if (
-            health.state is BreakerState.HALF_OPEN
-            or health.consecutive_failures >= self._threshold
-        ):
+        if health.state is BreakerState.HALF_OPEN or health.consecutive_failures >= self._threshold:
             health.state = BreakerState.OPEN
             health.opened_at = now if now is not None else time.monotonic()
 

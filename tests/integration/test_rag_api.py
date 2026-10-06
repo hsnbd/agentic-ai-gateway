@@ -253,3 +253,74 @@ class TestAuthorization:
     @pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer bogus"}])
     def test_anonymous_is_rejected(self, client: TestClient, headers: dict[str, str]) -> None:
         assert client.get("/v1/rag/collections", headers=headers).status_code == 401
+
+
+class TestHybridSearch:
+    """Keyword search finds exact codes that hashed bag-of-words embeddings rank poorly."""
+
+    DOCS = (
+        ("Error E-4471 means the billing postcode did not match the card.", "e4471.md"),
+        ("Payment errors are usually declined cards or expired cards in billing.", "payments.md"),
+        ("Billing questions go to the billing team, who handle card payments.", "billing.md"),
+    )
+
+    def _setup(self, client: TestClient, headers: dict[str, str]) -> str:
+        collection = _collection(client, headers, name="codes")
+        for content, source in self.DOCS:
+            _ingest(client, headers, collection["id"], content, source=source)
+        collection_id: str = collection["id"]
+        return collection_id
+
+    def _top_source(self, client: TestClient, headers: dict[str, str], body: dict[str, Any]) -> Any:
+        response = client.post("/v1/rag/search", json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()["results"]
+
+    def test_hybrid_ranks_the_exact_code_first(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        collection_id = self._setup(client, auth_headers)
+        query = {"collection_id": collection_id, "query": "card billing error 4471", "top_k": 3}
+        hybrid = self._top_source(client, auth_headers, {**query, "search_mode": "hybrid"})
+        assert hybrid[0]["source"] == "e4471.md"
+        assert 0 < hybrid[0]["score"] <= 1
+
+        filtered = self._top_source(
+            client,
+            auth_headers,
+            {**query, "search_mode": "hybrid", "filters": {"source": "billing.md"}},
+        )
+        assert [item["source"] for item in filtered] == ["billing.md"]
+
+    def test_unknown_search_mode_and_symbol_only_queries(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        collection_id = self._setup(client, auth_headers)
+        bad = client.post(
+            "/v1/rag/search",
+            json={"collection_id": collection_id, "query": "x", "search_mode": "magic"},
+            headers=auth_headers,
+        )
+        assert bad.status_code == 422
+        # No keyword terms: hybrid falls back to the vector ranking alone.
+        symbols = self._top_source(
+            client,
+            auth_headers,
+            {"collection_id": collection_id, "query": "?!", "search_mode": "hybrid"},
+        )
+        assert isinstance(symbols, list)
+
+    def test_chat_grounding_accepts_hybrid_search(
+        self, client: TestClient, auth_headers: dict[str, str], primary: FakeProvider
+    ) -> None:
+        collection_id = self._setup(client, auth_headers)
+        response = client.post(
+            "/v1/chat/completions",
+            json=chat_body(
+                "What is E-4471?",
+                aigw={"rag": {"collection_id": collection_id, "search_mode": "hybrid", "top_k": 1}},
+            ),
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["aigw"]["sources"][0]["source"] == "e4471.md"

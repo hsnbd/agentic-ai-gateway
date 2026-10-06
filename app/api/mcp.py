@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 from typing import Any, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, model_validator
 
-from app.api.deps import require_gateway_admin, require_gateway_writer
+from app.api.deps import CurrentPrincipal, require_gateway_admin, require_gateway_writer
 from app.core.errors import GatewayError, InvalidRequestError
 from app.core.schemas import Message, ToolCall, ToolDef
+from app.core.state import GatewayState
 from app.db.models import McpServer
 from app.mcp.registry import McpRegistry
 from app.tools.executor import ToolExecutor
+from app.tools.governance import McpScope, ToolCallContext
 
 router = APIRouter(tags=["mcp"])
 
@@ -33,6 +36,7 @@ class McpServerCreate(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     tool_prefix: str | None = Field(default=None, max_length=64)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: float | None = Field(default=None, gt=0, le=600)
 
     @model_validator(mode="after")
     def validate_transport_configuration(self) -> McpServerCreate:
@@ -52,6 +56,7 @@ class McpServerUpdate(BaseModel):
     tool_prefix: str | None = Field(default=None, max_length=64)
     metadata: dict[str, Any] | None = None
     is_active: bool | None = None
+    timeout_seconds: float | None = Field(default=None, gt=0, le=600)
 
 
 class McpServerResponse(BaseModel):
@@ -70,6 +75,7 @@ class McpServerResponse(BaseModel):
     discovered_tools: list[dict[str, Any]] = Field(default_factory=list)
     tool_prefix: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: float | None = None
 
     @classmethod
     def from_server(cls, server: McpServer) -> McpServerResponse:
@@ -82,13 +88,15 @@ class McpServerResponse(BaseModel):
             args=list(server.args or []),
             env=dict.fromkeys(server.env or {}, "***"),
             url=server.url,
-            headers=dict(server.headers or {}),
+            # Header values are credentials as often as env values (Authorization).
+            headers=dict.fromkeys(server.headers or {}, "***"),
             is_active=server.is_active,
             health_status=server.health_status,
             last_health_check_at=server.last_health_check_at,
             discovered_tools=list(server.discovered_tools or []),
             tool_prefix=server.tool_prefix,
             metadata=dict(server.metadata_ or {}),
+            timeout_seconds=server.timeout_seconds,
         )
 
 
@@ -97,6 +105,10 @@ class McpRefreshResponse(BaseModel):
     healthy: bool
     tools: list[ToolDef] = Field(default_factory=list)
     error: str | None = None
+    #: Circuit-breaker state for tool calls: closed, open, or half_open.
+    breaker: str = "closed"
+    #: Recent stderr lines from a stdio server.
+    stderr: list[str] = Field(default_factory=list)
     failure_kind: str | None = None
 
 
@@ -165,6 +177,7 @@ async def create_server(payload: McpServerCreate, request: Request) -> McpServer
             description=payload.description,
             tool_prefix=payload.tool_prefix,
             metadata=payload.metadata,
+            timeout_seconds=payload.timeout_seconds,
         )
     except GatewayError as exc:
         _raise_http(exc)
@@ -224,24 +237,47 @@ async def refresh_server(server_id: str, request: Request) -> McpRefreshResponse
         tools=tools,
         error=diagnostic.get("message") if diagnostic else None,
         failure_kind=diagnostic.get("failure_kind") if diagnostic else None,
+        **registry.runtime(server_id),
     )
 
 
 @router.get("/v1/mcp/tools", response_model=list[ToolDef])
 async def list_tools(
     request: Request,
+    principal: CurrentPrincipal,
     server_id: str | None = Query(default=None),
 ) -> list[ToolDef]:
+    """The tools the caller may use; a key's MCP allowlists hide the rest."""
+    registry = _registry(request)
+    scope = McpScope.for_key(principal.key)
     try:
-        return await _registry(request).tools_for([server_id] if server_id else None)
+        tools = await registry.tools_for([server_id] if server_id else None)
     except GatewayError as exc:
         _raise_http(exc)
+    return [tool for tool in tools if scope.allows(registry, tool.function.name)]
 
 
 @router.post("/v1/mcp/tools/call", dependencies=_WRITE, response_model=McpToolCallResponse)
-async def call_tool(payload: McpToolCallRequest, request: Request) -> McpToolCallResponse:
+async def call_tool(
+    payload: McpToolCallRequest, request: Request, principal: CurrentPrincipal
+) -> McpToolCallResponse:
+    """Call one tool directly, under the same scope, guardrails, and audit as the agent loop."""
+    state: GatewayState = request.app.state.gateway
+    key = principal.key
+    executor = ToolExecutor(
+        _registry(request),
+        scope=McpScope.for_key(key),
+        call_context=ToolCallContext(
+            state=state,
+            source="direct",
+            request_id=request.headers.get("x-request-id") or f"req_{uuid.uuid4().hex}",
+            key_id=key.id if key is not None else None,
+            team_id=key.team_id if key is not None else None,
+            policy=(key.guardrail_policy if key is not None else None) or "default",
+        ),
+    )
     call = ToolCall(name=payload.name, arguments=json.dumps(payload.arguments))
-    message = await ToolExecutor(_registry(request)).execute(call)
+    message = await executor.execute(call)
     return McpToolCallResponse(message=message)
 
 

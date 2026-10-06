@@ -229,6 +229,24 @@ The bad-asset check is deliberate. An SPA fallback that returns `index.html` for
 every unmatched path turns a missing JS bundle into a silent white screen; here
 it still 404s.
 
+### 13. Retrieval quality
+
+[`scripts/rag_eval.py`](../scripts/rag_eval.py) ingests a labelled corpus ([`bench/datasets/rag_eval.json`](../bench/datasets/rag_eval.json): 24 documents, 48 questions, each naming the document that answers it) and scores where that document ranks:
+
+| Metric | Vector | Hybrid |
+|---|---|---|
+| recall@1 | 0.63 | **0.83** |
+| recall@5 | 0.85 | **0.98** |
+| MRR | 0.71 | **0.90** |
+| nDCG@5 | 0.75 | **0.92** |
+| p50 latency | 4.8 ms | 5.0 ms |
+
+Hybrid search fuses BM25 keyword matches with vector similarity by reciprocal rank. It wins most on questions that hinge on an exact code or name ("What does E-4471 mean?"), where embeddings blur the token. As with the cache, these numbers use the fake upstream's hash-based embeddings; run the script against a gateway with a real embedding model to measure semantic quality.
+
+### 14. Agent loop
+
+The `agentic_tool_calls` section of `evaluate.py` sends tool-using requests through `aigw.mcp` and reports tool-loop success, tool calls per request, the rate of loops stopped by `max_iterations`, and latency per hop. Against the e2e stack: 100% of loops complete with one tool call and none hit the iteration cap.
+
 ## Sustained load
 
 `scripts/evaluate.py` uses short bursts, which cannot reveal saturation.

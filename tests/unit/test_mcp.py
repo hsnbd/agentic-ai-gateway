@@ -153,7 +153,10 @@ async def test_tool_result_is_error_is_returned_not_raised() -> None:
             json={
                 "jsonrpc": "2.0",
                 "id": payload["id"],
-                "result": {"content": [{"type": "text", "text": "failure detail"}], "isError": True},
+                "result": {
+                    "content": [{"type": "text", "text": "failure detail"}],
+                    "isError": True,
+                },
             },
         )
 
@@ -265,6 +268,9 @@ class _ApiRegistry:
 
     async def tools_for(self, server_ids: list[str]) -> list[Any]:
         return []
+
+    def runtime(self, server_id: str) -> dict[str, Any]:
+        return {"breaker": "closed", "stderr": []}
 
     async def diagnostics(self, server_id: str) -> dict[str, str] | None:
         return {"message": "Connection refused", "failure_kind": "connection"}

@@ -9,13 +9,19 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.core.errors import NotFoundError
+from app.core.errors import ErrorCode, GatewayError, NotFoundError
 from app.core.schemas import ToolDef
+from app.core.secrets import SecretBox
 from app.db.models import McpServer
 from app.mcp.client import McpClient
 from app.mcp.translate import mcp_tool_to_tooldef
+from app.observability.metrics import MCP_BREAKER_OPEN
+from app.routing.breaker import BreakerState, CircuitBreaker
 
 logger = logging.getLogger(__name__)
+
+#: Pause before retrying a failed discovery.
+_DISCOVERY_RETRY_DELAY = 0.2
 
 
 @dataclass
@@ -36,6 +42,7 @@ class _ServerRecord:
     discovered_tools: list[dict[str, Any]] = field(default_factory=list)
     expires_at: float = 0.0
     last_error: dict[str, str] | None = None
+    timeout_seconds: float | None = None
 
     @property
     def alias(self) -> str:
@@ -53,9 +60,38 @@ class McpRegistry:
         self._last_errors: dict[str, dict[str, str]] = {}
         self._refresh_lock = asyncio.Lock()
         self._cache_ttl = float(getattr(settings, "mcp_tool_cache_ttl_seconds", 300))
+        self._default_timeout = float(getattr(settings, "mcp_timeout_seconds", 10.0))
+        self._health_task: asyncio.Task[None] | None = None
+        # Per-server breaker: a failing server fails fast instead of making every
+        # agent loop wait for its timeout.
+        self._breaker = CircuitBreaker(
+            int(getattr(settings, "circuit_breaker_threshold", 5)),
+            float(getattr(settings, "circuit_breaker_cooldown_seconds", 30.0)),
+        )
+        key = getattr(settings, "secrets_encryption_key", None)
+        self._secrets = SecretBox(key.get_secret_value() if key is not None else None)
+
+    def start_health_checks(self, interval: float) -> None:
+        """Re-discover every server every ``interval`` seconds, so health and tool
+        lists stay current without waiting for a request to notice a change."""
+        if interval > 0 and self._health_task is None:
+            self._health_task = asyncio.create_task(self._health_loop(interval))
+
+    async def _health_loop(self, interval: float) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self._load_records(force=True)
+                await self.refresh()
+            except Exception:
+                logger.warning("Background MCP health check failed", exc_info=True)
 
     async def close(self) -> None:
-        """Close every client, terminating stdio server processes."""
+        """Stop health checks and close every client, terminating stdio processes."""
+        if self._health_task is not None:
+            self._health_task.cancel()
+            await asyncio.gather(self._health_task, return_exceptions=True)
+            self._health_task = None
         clients, self._clients = list(self._clients.values()), {}
         for client in clients:
             try:
@@ -114,9 +150,8 @@ class McpRegistry:
             prefix = f"{record.alias}__"
             if namespaced_name.startswith(prefix):
                 original_name = namespaced_name[len(prefix) :]
-                if (
-                    record.health_status == "healthy"
-                    and any(tool.get("name") == original_name for tool in record.discovered_tools)
+                if record.health_status == "healthy" and any(
+                    tool.get("name") == original_name for tool in record.discovered_tools
                 ):
                     return record.id, original_name
         raise NotFoundError(f"MCP tool {namespaced_name!r} was not found or is unavailable")
@@ -130,7 +165,29 @@ class McpRegistry:
             client = self._clients.get(server_id)
         if client is None:
             raise NotFoundError(f"MCP server {server_id!r} is unavailable")
-        return await client.call_tool(name, arguments)
+        if not self._breaker.is_available(server_id):
+            raise GatewayError(
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                f"MCP server {server_id!r} is failing; calls are paused until it recovers",
+                details={"failure_kind": "circuit_open"},
+            )
+        started = time.monotonic()
+        try:
+            result = await client.call_tool(name, arguments)
+        except GatewayError as exc:
+            if _is_outage(exc):
+                self._breaker.record_failure(server_id, exc.message)
+            else:
+                # The server answered (with an error), so it is up.
+                self._breaker.record_success(server_id)
+            raise
+        else:
+            self._breaker.record_success(server_id, (time.monotonic() - started) * 1000)
+        finally:
+            MCP_BREAKER_OPEN.labels(self.server_name(server_id) or server_id).set(
+                1 if self._breaker.health(server_id).state is BreakerState.OPEN else 0
+            )
+        return result
 
     async def health(self) -> dict[str, bool]:
         await self._load_records()
@@ -152,16 +209,18 @@ class McpRegistry:
         description: str | None = None,
         tool_prefix: str | None = None,
         metadata: dict[str, Any] | None = None,
+        timeout_seconds: float | None = None,
     ) -> McpServer:
         row = McpServer(
+            timeout_seconds=timeout_seconds,
             name=name,
             description=description,
             transport=transport,
             url=url,
             command=command,
             args=args or [],
-            env=env or {},
-            headers=headers or {},
+            env=self._secrets.encrypt_map(env),
+            headers=self._secrets.encrypt_map(headers),
             is_active=True,
             tool_prefix=tool_prefix,
             metadata_=metadata or {},
@@ -184,6 +243,7 @@ class McpRegistry:
             await client.aclose()
         self._records.pop(server_id, None)
         self._last_errors.pop(server_id, None)
+        self._breaker.reset(server_id)
 
     async def update_server(self, server_id: str, **updates: Any) -> McpServer:
         reconnect_fields = {
@@ -194,6 +254,7 @@ class McpRegistry:
             "env",
             "headers",
             "is_active",
+            "timeout_seconds",
         }
         changed_connection = bool(reconnect_fields.intersection(updates))
         async with self.db.session() as session:
@@ -201,6 +262,8 @@ class McpRegistry:
             if not isinstance(row, McpServer):
                 raise NotFoundError(f"MCP server {server_id!r} was not found")
             for field_name, value in updates.items():
+                if field_name in ("env", "headers"):
+                    value = self._secrets.encrypt_map(value)
                 setattr(row, "metadata_" if field_name == "metadata" else field_name, value)
             await session.flush()
         if changed_connection:
@@ -208,6 +271,7 @@ class McpRegistry:
             if client is not None:
                 await client.aclose()
             self._last_errors.pop(server_id, None)
+            self._breaker.reset(server_id)
             await self._load_records(force=True)
             await self.refresh(server_id)
         else:
@@ -217,6 +281,18 @@ class McpRegistry:
     async def diagnostics(self, server_id: str) -> dict[str, str] | None:
         await self._load_records()
         return self._last_errors.get(server_id)
+
+    def server_name(self, server_id: str) -> str | None:
+        record = self._records.get(server_id)
+        return record.name if record is not None else None
+
+    def runtime(self, server_id: str) -> dict[str, Any]:
+        """Live state for operators: breaker state and a stdio server's recent stderr."""
+        client = self._clients.get(server_id)
+        return {
+            "breaker": self._breaker.health(server_id).state.value,
+            "stderr": list(client.stderr_tail) if client is not None else [],
+        }
 
     async def get_server(self, server_id: str) -> McpServer:
         async with self.db.session() as session:
@@ -236,6 +312,12 @@ class McpRegistry:
         async with self.db.session() as session:
             result = await session.execute(select(McpServer))
             rows = list(result.scalars().all())
+            # Rows written before a key was configured are encrypted on first load.
+            for row in rows:
+                if self._secrets.needs_encryption(row.env):
+                    row.env = self._secrets.encrypt_map(row.env)
+                if self._secrets.needs_encryption(row.headers):
+                    row.headers = self._secrets.encrypt_map(row.headers)
         for row in rows:
             existing = self._records.get(row.id)
             self._records[row.id] = _ServerRecord(
@@ -245,12 +327,13 @@ class McpRegistry:
                 url=row.url,
                 command=row.command,
                 args=list(row.args or []),
-                env=dict(row.env or {}),
-                headers=dict(row.headers or {}),
+                env=self._secrets.decrypt_map(row.env),
+                headers=self._secrets.decrypt_map(row.headers),
                 is_active=row.is_active,
                 tool_prefix=row.tool_prefix,
                 description=row.description,
                 metadata=dict(row.metadata_ or {}),
+                timeout_seconds=row.timeout_seconds,
                 health_status=row.health_status or "unknown",
                 discovered_tools=list(row.discovered_tools or []),
                 expires_at=existing.expires_at if existing else 0.0,
@@ -272,28 +355,14 @@ class McpRegistry:
             error = {"message": "MCP HTTP server is missing a URL", "failure_kind": "configuration"}
             await self._mark_unhealthy(record, error)
             return
-        client = self._clients.get(record.id)
         try:
-            if client is None:
-                client = McpClient(
-                    record.url,
-                    record.headers,
-                    timeout=getattr(self.settings, "mcp_timeout_seconds", 10.0),
-                    command=record.command if record.transport == "stdio" else None,
-                    args=record.args,
-                    env=record.env,
-                )
-                await client.initialize()
-            tools = await client.list_tools()
+            client, tools = await self._connect(record)
         except Exception as exc:
             logger.warning(
                 "MCP server discovery failed",
                 extra={"mcp_server_id": record.id},
                 exc_info=True,
             )
-            if client is not None:
-                await client.aclose()
-            self._clients.pop(record.id, None)
             error = _describe_failure(exc)
             await self._mark_unhealthy(record, error)
             return
@@ -304,6 +373,39 @@ class McpRegistry:
         self._last_errors.pop(record.id, None)
         record.expires_at = time.monotonic() + self._cache_ttl
         await self._save_discovery(record)
+
+    async def _connect(self, record: _ServerRecord) -> tuple[McpClient, list[dict[str, Any]]]:
+        """Reuse or open the server's client and list its tools.
+
+        Discovery has no side effects, so a transport failure or timeout is
+        retried once with a fresh connection. A failed client is closed and
+        forgotten, so the next discovery starts clean.
+        """
+        client = self._clients.get(record.id)
+        for attempt in (1, 2):
+            fresh = client is None
+            if client is None:
+                client = McpClient(
+                    record.url,
+                    record.headers,
+                    timeout=record.timeout_seconds or self._default_timeout,
+                    command=record.command if record.transport == "stdio" else None,
+                    args=record.args,
+                    env=record.env,
+                )
+            try:
+                if fresh:
+                    await client.initialize()
+                return client, await client.list_tools()
+            except Exception as exc:
+                await client.aclose()
+                self._clients.pop(record.id, None)
+                client = None
+                retryable = isinstance(exc, GatewayError) and _is_outage(exc)
+                if attempt == 2 or not retryable:
+                    raise
+                await asyncio.sleep(_DISCOVERY_RETRY_DELAY)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     async def _mark_unhealthy(self, record: _ServerRecord, error: dict[str, str]) -> None:
         record.health_status = "unhealthy"
@@ -320,6 +422,11 @@ class McpRegistry:
                 row.health_status = record.health_status
                 row.last_health_check_at = datetime.now(UTC)
                 row.discovered_tools = record.discovered_tools
+
+
+def _is_outage(exc: GatewayError) -> bool:
+    """Transport failures and timeouts; not JSON-RPC or tool-level errors."""
+    return exc.code in (ErrorCode.PROVIDER_UNAVAILABLE, ErrorCode.PROVIDER_TIMEOUT)
 
 
 def _describe_failure(exc: Exception) -> dict[str, str]:

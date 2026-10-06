@@ -600,3 +600,18 @@ def test_empty_range_produces_no_chunks() -> None:
     from app.rag.chunking import _chunk_range
 
     assert _chunk_range("text", 2, 2, chunk_size=10, overlap=0, first_index=0) == []
+
+
+async def test_closing_the_rag_service_cancels_background_ingestions() -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.rag.service import RagService
+
+    service = RagService(
+        SimpleNamespace(db=None, settings=SimpleNamespace(rag_ingest_concurrency=1))
+    )  # type: ignore[arg-type]
+    task = asyncio.create_task(asyncio.sleep(60))
+    service._tasks.add(task)
+    await service.close()
+    assert task.cancelled()

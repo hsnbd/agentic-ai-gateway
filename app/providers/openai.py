@@ -44,10 +44,12 @@ class OpenAIProvider(Provider):
                 if isinstance(part, TextPart):
                     content.append({"type": "text", "text": part.text})
                 else:
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {"url": part.url, "detail": part.detail},
-                    })
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": part.url, "detail": part.detail},
+                        }
+                    )
             payload["content"] = content
         else:
             payload["content"] = message.content
@@ -75,8 +77,12 @@ class OpenAIProvider(Provider):
         }
         merged = self._merge_params(request, deployment)
         for key in (
-            "temperature", "top_p", "max_tokens", "seed",
-            "presence_penalty", "frequency_penalty",
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "seed",
+            "presence_penalty",
+            "frequency_penalty",
         ):
             if key in merged:
                 payload[key] = merged[key]
@@ -179,9 +185,7 @@ class OpenAIProvider(Provider):
         except Exception as exc:
             raise self.map_error(exc, deployment) from exc
 
-    def stream(
-        self, request: ChatRequest, deployment: Deployment
-    ) -> AsyncIterator[StreamChunk]:
+    def stream(self, request: ChatRequest, deployment: Deployment) -> AsyncIterator[StreamChunk]:
         return self._stream(request, deployment)
 
     async def _stream(
@@ -241,9 +245,7 @@ class OpenAIProvider(Provider):
         except Exception as exc:
             raise self.map_error(exc, deployment) from exc
 
-    async def embed(
-        self, request: EmbeddingRequest, deployment: Deployment
-    ) -> EmbeddingResponse:
+    async def embed(self, request: EmbeddingRequest, deployment: Deployment) -> EmbeddingResponse:
         started = time.perf_counter()
         payload: dict[str, Any] = {
             "model": deployment.provider_model,

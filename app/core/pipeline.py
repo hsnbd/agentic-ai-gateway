@@ -258,9 +258,7 @@ class Pipeline:
 
     def _stream_guard(self, ctx: RequestContext) -> Any | None:
         """The post-stage that can filter a stream as it flows, if any."""
-        return next(
-            (post for post in self.post_stages if hasattr(post, "stream_redactor")), None
-        )
+        return next((post for post in self.post_stages if hasattr(post, "stream_redactor")), None)
 
     async def _run_pre_stages(self, ctx: RequestContext) -> ChatResponse | None:
         for stage in self.pre_stages:

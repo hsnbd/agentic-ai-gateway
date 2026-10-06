@@ -17,6 +17,8 @@ Exit code is 0 when every check passes and 1 otherwise.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -170,9 +172,7 @@ def openai_checks(results: Results, base_url: str, api_key: str, model: str) -> 
         return f"tool result accepted, replied with {kind}"
 
     def embeddings() -> str:
-        response = client.embeddings.create(
-            model="text-embedding-3-small", input="hello world"
-        )
+        response = client.embeddings.create(model="text-embedding-3-small", input="hello world")
         vector = response.data[0].embedding
         if len(vector) < 8:
             raise AssertionError(f"suspicious embedding length {len(vector)}")
@@ -251,17 +251,37 @@ def main() -> int:
         action="store_true",
         help="Skip the Anthropic dialect checks.",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print a machine-readable summary on stdout; the progress log goes to stderr.",
+    )
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
     results = Results()
 
-    print(f"Agent compatibility — {base_url}, model={args.model}")
-    openai_checks(results, base_url, args.api_key, args.model)
-    if not args.skip_anthropic:
-        anthropic_checks(results, base_url, args.api_key, args.model)
+    log = contextlib.redirect_stdout(sys.stderr) if args.json else contextlib.nullcontext()
+    with log:
+        print(f"Agent compatibility — {base_url}, model={args.model}")
+        openai_checks(results, base_url, args.api_key, args.model)
+        if not args.skip_anthropic:
+            anthropic_checks(results, base_url, args.api_key, args.model)
 
     total = len(results.passed) + len(results.failed)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "checks": total,
+                    "passed": len(results.passed),
+                    "failed": [{"name": name, "detail": detail} for name, detail in results.failed],
+                    "pass_rate": round(len(results.passed) / total, 4) if total else 0.0,
+                },
+                indent=2,
+            )
+        )
+        return 1 if results.failed else 0
     print(f"\n{len(results.passed)}/{total} checks passed")
     if results.failed:
         print("\nFailures:")

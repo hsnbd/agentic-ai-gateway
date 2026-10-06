@@ -20,7 +20,7 @@ double-counted metrics · `/v1/rag/query` always 500 · any virtual key or viewe
 failed-over requests attributed to the dead deployment · Anthropic streaming broken for the TypeScript SDK ·
 `MAX_RETRIES` off by one · logging/tracing settings ignored · system info reporting RAG/MCP as off ·
 console: RAG page crash, every key shown "Disabled", Models columns blank, playground bypassing fallback and
-breaking on stream errors, never sending the message just typed, no user management · streamed upstream errors crashed while being mapped (raw 500,
+breaking on stream errors, never sending the message just typed, no user management · MCP server header values (often credentials) returned in clear by the API · token counting stalled requests while downloading its tokenizer · streamed upstream errors crashed while being mapped (raw 500,
 no context-length fallback).
 
 Test suites referenced below:
@@ -99,15 +99,22 @@ logic layer (API client, SSE parsing, playground inspector, formatters, auth, sh
 | Feature | Status | Tests |
 |---|---|---|
 | Collections CRUD (`/v1/rag/collections`) | ✅ | int (`test_rag_api.py`) |
-| Document ingest (JSON / multipart text), list, delete; multipart validation (file field, .txt/.md, metadata JSON) | ✅ | unit, int |
+| Document ingest (JSON / multipart), list, delete; multipart validation (file field, file type, metadata JSON) | ✅ | unit, int |
 | Markdown-aware chunking, idempotent ingest, rollback on vector failure | ✅ | unit, int |
 | Chunk inspector (list / get with embedding preview) | ✅ | unit, int |
 | `POST /v1/rag/search` with MMR diversity and filters | ✅ | unit, int |
+| **Hybrid retrieval** (`search_mode: hybrid`): BM25 keyword search fused with vector search by reciprocal rank; `BM25STD` scorer with legacy fallback | ✅ | **new**: unit (`test_rag_hybrid.py`), int, e2e; recall@5 0.85 → 0.98 on `bench/datasets/rag_eval.json` |
+| Optional **LLM reranking** (`rerank_model` per request or collection), falls back to retrieval order on any failure | ✅ | **new**: unit, int (`test_rag_rerank.py`) |
+| **Metadata filters**: collections declare `filterable_fields`, indexed as tags; undeclared fields refused | ✅ | **new**: int (`test_rag_filters.py`) |
 | `POST /v1/rag/query` (retrieve + chat), runs as the calling key | ✅ | **fixed** (was always 500); int |
 | RAG in ordinary chat requests (`aigw.rag`, both dialects, streaming; sources in `aigw.sources` + `X-Gateway-RAG-Sources`) | ✅ | **new**: `RagStage` after auth, before guardrails/cache; int (`test_agentic_http.py`), e2e (`agentic.feature`) |
 | Retrieved text screened by input guardrails; cache scoped per collection | ✅ | int |
 | One RediSearch index per collection (`aigw:rag:<collection>:idx`) | ✅ | dead `RAG_INDEX_NAME` setting removed; int |
-| Non-text ingestion (PDF, DOCX) | 💡 | |
+| **Tenancy**: collections owned by the creating key's team (or the key); others get 404; shared collections read-only to applications; names unique per owner | ✅ | **new**: migration 0002; int (`test_rag_tenancy.py`), e2e (`rag_enterprise.feature`) |
+| **Recoverability**: a vanished index is recreated and backfilled; `GET …/index` status; `POST …/reindex` rebuilds vectors from Postgres | ✅ | **new**: int (`test_rag_recovery.py`, incl. FLUSHALL), e2e |
+| **File ingestion**: .txt, .md, .html, .pdf, .docx (`rag-docs` extra, in the Docker image) | ✅ | **new**: unit (`test_rag_extract.py`), int |
+| **Ingestion at scale**: size limit (413), background ingestion for large documents (202, poll), interrupted ingestions failed on restart, re-upload replaces by source | ✅ | **new**: int (`test_rag_ingestion.py`) |
+| RAG metrics: retrievals, latency, empty results, ingestions, reranks | ✅ | **new**: int (`test_rag_mcp_metrics.py`) |
 
 ## 6. MCP and tools
 
@@ -123,6 +130,13 @@ logic layer (API client, SSE parsing, playground inspector, formatters, auth, sh
 | MCP clients / stdio processes closed on shutdown | ✅ | **fixed**: `McpRegistry.close()` in `GatewayState.shutdown` |
 | Server-side agent loop (`aigw.mcp`): MCP tools offered and executed until the model answers; client tools returned; `max_iterations` | ✅ | **new**: `AgenticExecutor`; int, e2e |
 | Agent tool calls logged (`stage_timings.tool_calls`, `tool_calls_count`), usage summed across hops, auth/budget once per request | ✅ | int |
+| **Secrets at rest**: server `env` and `headers` values Fernet-encrypted (`SECRETS_ENCRYPTION_KEY`, rotation); header values redacted in API responses | ✅ | **new** (headers were returned in clear); unit, int (`test_mcp_secrets.py`) |
+| **Access control**: per-key `allowed_mcp_servers` / `allowed_tools` (wildcards) on listing, agent loop, and direct calls | ✅ | **new**: migration 0004; int (`test_mcp_governance.py`), e2e |
+| **Guardrails on tool traffic** (`apply_to_tools`): input rules on arguments, output rules on results; result size cap | ✅ | **new**: int, e2e |
+| **Tool-call audit log** (`/admin/api/tool-calls`, console MCP page): who, what, outcome, duration, guardrail; arguments hashed | ✅ | **new**: int, e2e |
+| **Resilience**: per-server circuit breaker; expired sessions re-initialised and replayed; crashed stdio servers restarted with a fresh handshake; stderr kept for diagnostics; per-server timeouts; discovery retry | ✅ | **new**: unit (`test_mcp_resilience.py`); e2e fake server expires sessions every 5 s |
+| Background health checks (`MCP_HEALTH_INTERVAL_SECONDS`) | ✅ | **new**: unit |
+| MCP metrics: tool calls by server, tool, and status; latency; breaker state | ✅ | **new**: int |
 
 ## 7. Guardrails
 
@@ -229,14 +243,18 @@ All console scenarios run in Chromium via Playwright (`e2e/features/ui`).
 |---|---|---|
 | Unit suite | ✅ | `make test-unit` |
 | Integration suite on real Postgres + Redis Stack | ✅ | `make test-integration` |
-| Cucumber + Playwright E2E suite (API via official SDKs + console UI) | ✅ | 86 scenarios / 445 steps, `make e2e` |
+| Cucumber + Playwright E2E suite (API via official SDKs + console UI) | ✅ | 129 scenarios / 663 steps, `make e2e` |
 | SDK compatibility script (`scripts/agent_compat.py`) | ✅ | 10/10 against fake upstream |
 | Evaluation harness (`scripts/evaluate.py`) | ✅ | 100% success, failover and routing verified |
 | Deterministic fakes: multi-provider upstream (OpenAI, Anthropic, Gemini, Ollama wire formats; bag-of-words embeddings), MCP server (HTTP + stdio) | ✅ | `scripts/fake_upstream.py`, `scripts/fake_mcp_server.py` |
 | CI: ruff on `tests/`, UI lint, integration job with Postgres + Redis Stack services, E2E job with report artifact | ✅ | `.github/workflows/ci.yml` |
-| Coverage report / gate | 💡 | |
-| Load test in CI (`scripts/loadtest.py`) | 💡 | |
-| Repo-wide `ruff format` (the codebase is not currently format-clean) | 💡 | |
+| Coverage gate: 100% line and branch on `app/`, 100% on the console's logic layer | ✅ | `make coverage`, `make ui-test`; CI `coverage` job |
+| **Benchmarks** in one command, saved as JSON, compared against a committed baseline with tolerances | ✅ | **new**: `make bench` / `bench-check` / `bench-baseline`, `scripts/bench.py`, `scripts/bench_compare.py`, `bench/thresholds.yaml`; CI `bench` job |
+| **Retrieval-quality benchmark** (recall@k, MRR, nDCG, by question kind; vector vs hybrid) | ✅ | **new**: `scripts/rag_eval.py`, `bench/datasets/rag_eval.json` |
+| Agent-loop benchmark (tool-loop success, tool calls per request, latency per hop) | ✅ | **new**: `scripts/evaluate.py` `agentic_tool_calls` section |
+| Load test in CI with success and p95 gates | ✅ | **new**: CI `bench` job |
+| Repo-wide `ruff format`, enforced in CI | ✅ | **new**: `make fmt-check` |
+| Token counting never blocks on tokenizer downloads (bounded background load; files baked into the image) | ✅ | **fixed**: requests stalled on first use with a slow network; unit |
 
 ## Proposed next steps
 
@@ -245,11 +263,13 @@ loop, key and deployment limits, streaming output guardrails, Alembic
 migrations, refresh tokens and revocation, the Teams page and CSV export, tag
 routing, cache similarity and latency saved, and the LLM judge.
 
+Done since the last list: guardrails on tool traffic, non-text and background
+RAG ingestion, the load test in CI, and repo-wide formatting.
+
 What is still open, ordered by value; none are started:
 
-1. **Guardrails on tool traffic**: scan MCP tool arguments and results in the agent loop, not only prompts and answers.
-2. **Streaming agent hops**: stream intermediate model turns instead of only the final answer.
-3. **Non-text RAG ingestion** (PDF, DOCX, HTML) and background ingestion for large documents.
-4. **Load test in CI** (`scripts/loadtest.py`) with latency budgets.
-5. **Repo-wide `ruff format`** once, then enforced in CI.
-6. **Provider adapters against live APIs**: an opt-in `live`-marked suite for Anthropic, Gemini, and Ollama. Today they run end to end against the fake upstream, which follows each vendor's documented wire format but cannot catch the vendor changing it.
+1. **Streaming agent hops**: stream intermediate model turns instead of only the final answer.
+2. **Console: tool-call and RAG-index views** beyond the audit table, e.g. reindex and filter fields from the browser.
+3. **Load test against real providers** on a schedule, tracked over time.
+4. **OCR** for scanned PDFs (today they are refused with a clear message).
+5. **Provider adapters against live APIs**: an opt-in `live`-marked suite for Anthropic, Gemini, and Ollama. Today they run end to end against the fake upstream, which follows each vendor's documented wire format but cannot catch the vendor changing it.

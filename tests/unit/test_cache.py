@@ -226,10 +226,12 @@ async def test_similarity_just_below_threshold_is_a_miss() -> None:
 @pytest.mark.asyncio
 async def test_models_keys_and_system_prompts_never_cross_match() -> None:
     cache, _, _ = make_cache()
-    base = make_context(messages=[
-        Message(role=Role.SYSTEM, content="assistant one"),
-        Message(role=Role.USER, content="prompt"),
-    ])
+    base = make_context(
+        messages=[
+            Message(role=Role.SYSTEM, content="assistant one"),
+            Message(role=Role.USER, content="prompt"),
+        ]
+    )
     await store_answer(cache, base)
     other_model = make_context(
         model="model-b",
@@ -254,14 +256,17 @@ async def test_models_keys_and_system_prompts_never_cross_match() -> None:
     )
     other_system.key_id = base.key_id
 
-    assert len(
-        {
-            cache.build_namespace(base),
-            cache.build_namespace(other_model),
-            cache.build_namespace(other_key),
-            cache.build_namespace(other_system),
-        }
-    ) == 4
+    assert (
+        len(
+            {
+                cache.build_namespace(base),
+                cache.build_namespace(other_model),
+                cache.build_namespace(other_key),
+                cache.build_namespace(other_system),
+            }
+        )
+        == 4
+    )
     assert await cache.lookup(other_model) is None
     assert await cache.lookup(other_key) is None
     assert await cache.lookup(other_system) is None

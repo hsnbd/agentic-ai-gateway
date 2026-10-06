@@ -121,6 +121,7 @@ export default function RagCollections() {
   const [chunkingStrategy, setChunkingStrategy] = useState<ChunkingStrategy>('recursive');
   const [searchQuery, setSearchQuery] = useState('');
   const [topK, setTopK] = useState(5);
+  const [searchMode, setSearchMode] = useState<'vector' | 'hybrid'>('hybrid');
   const [minScore, setMinScore] = useState(0);
   const [useScoreThreshold, setUseScoreThreshold] = useState(false);
   const [searchResults, setSearchResults] = useState<RagSearchResult[] | null>(null);
@@ -277,7 +278,7 @@ export default function RagCollections() {
     try {
       const response = await apiRequest<RagSearchResponse>('/v1/rag/search', {
         method: 'POST',
-        body: { collection_id: selected.id, query: searchQuery.trim(), top_k: topK, ...(useScoreThreshold ? { min_score: minScore } : {}) },
+        body: { collection_id: selected.id, query: searchQuery.trim(), top_k: topK, search_mode: searchMode, ...(useScoreThreshold ? { min_score: minScore } : {}) },
       });
       setSearchResults(response.results);
     } catch (error) {
@@ -343,7 +344,7 @@ export default function RagCollections() {
                 </Stack>
                 {ingestMode === 'file' ? <Stack spacing={1.5} sx={{ mt: 2 }}>
                   <Typography variant="body2" color="text.secondary">Supported formats: .txt and .md. Chunk size and overlap are configured on the collection; strategy is selected for each document.</Typography>
-                  <Button component="label" variant="outlined" disabled={uploadProgress !== null}>Choose .txt or .md file<input hidden type="file" accept=".txt,.md,text/plain,text/markdown" onChange={(event) => void uploadFile(event)} /></Button>
+                  <Button component="label" variant="outlined" disabled={uploadProgress !== null}>Choose a file (.txt, .md, .html, .pdf, .docx)<input hidden type="file" accept=".txt,.md,.markdown,.html,.htm,.pdf,.docx" onChange={(event) => void uploadFile(event)} /></Button>
                 </Stack> : <Box component="form" onSubmit={(event: FormEvent<HTMLFormElement>) => void uploadText(event)} sx={{ display: 'grid', gap: 1.5, mt: 2 }}>
                   <TextField label="Document title / source" name="title" size="small" />
                   <TextField label="Document text" name="content" multiline minRows={5} required />
@@ -376,9 +377,10 @@ export default function RagCollections() {
             {tab === 'retrieval' && <Stack spacing={2}>
               <Card variant="outlined"><CardContent component="form" onSubmit={(event: FormEvent<HTMLFormElement>) => void runSearch(event)}>
                 <Typography variant="h3">Test retrieval</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>Search results are ranked by similarity; the API applies the optional minimum score before returning them.</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>Hybrid ranks by embedding similarity and keyword matches combined (best for exact codes and names); vector uses similarity alone. The optional minimum score applies to the final ranking.</Typography>
                 <TextField label="Query" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} fullWidth multiline minRows={2} required sx={{ mt: 2 }} />
                 <Stack direction={{ xs: 'column', sm: 'row' }} gap={1.5} sx={{ mt: 1.5, alignItems: { sm: 'center' } }}>
+                  <TextField select label="Search mode" size="small" value={searchMode} onChange={(event) => setSearchMode(event.target.value as 'vector' | 'hybrid')} sx={{ width: { sm: 170 } }} helperText={searchMode === 'hybrid' ? 'Vector + keyword (BM25)' : 'Embedding similarity'}><MenuItem value="hybrid">Hybrid</MenuItem><MenuItem value="vector">Vector</MenuItem></TextField>
                   <TextField label="Top-k" type="number" size="small" value={topK} onChange={(event) => setTopK(Math.max(1, Math.min(100, Number(event.target.value))))} inputProps={{ min: 1, max: 100 }} sx={{ width: { sm: 120 } }} />
                   <FormControlLabel control={<Checkbox checked={useScoreThreshold} onChange={(event) => setUseScoreThreshold(event.target.checked)} />} label="Set score threshold" />
                   <TextField label="Minimum score" type="number" size="small" value={minScore} onChange={(event) => setMinScore(Math.max(-1, Math.min(1, Number(event.target.value))))} inputProps={{ min: -1, max: 1, step: 0.05 }} helperText="-1 to 1" disabled={!useScoreThreshold} sx={{ width: { sm: 170 } }} />
@@ -430,7 +432,7 @@ export default function RagCollections() {
         <DialogTitle>Retry failed document</DialogTitle>
         <DialogContent sx={{ display: 'grid', gap: 2, pt: '12px !important' }}>
           <Typography variant="body2">Supply the exact original content for “{retryTarget?.title}”. The gateway stores a content hash, not the original text; retry will verify the hash before ingestion.</Typography>
-          <Button component="label" variant="outlined">Choose original .txt or .md file<input hidden type="file" accept=".txt,.md" onChange={(event) => { setRetryFile(event.target.files?.[0] ?? null); setRetryText(''); }} /></Button>
+          <Button component="label" variant="outlined">Choose the original file<input hidden type="file" accept=".txt,.md,.markdown,.html,.htm,.pdf,.docx" onChange={(event) => { setRetryFile(event.target.files?.[0] ?? null); setRetryText(''); }} /></Button>
           {retryFile && <Typography variant="body2">Selected: {retryFile.name}</Typography>}
           <TextField label="Or paste original text" multiline minRows={4} value={retryText} disabled={Boolean(retryFile)} onChange={(event) => setRetryText(event.target.value)} />
           {retryError && <Alert severity="error">{retryError}</Alert>}

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import itertools
 import json
 import os
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
 from app.core.errors import ErrorCode, GatewayError
+
+#: stderr lines kept per stdio server.
+_STDERR_LINES = 50
 
 
 class McpClient(httpx.AsyncClient):
@@ -48,6 +52,10 @@ class McpClient(httpx.AsyncClient):
         self._args = list(args)
         self._env = dict(env or {})
         self._process: asyncio.subprocess.Process | None = None
+        #: The last lines a stdio server wrote to stderr, for diagnostics.
+        self.stderr_tail: collections.deque[str] = collections.deque(maxlen=_STDERR_LINES)
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._initialized = False
 
     async def initialize(
         self, *, request_timeout: float | httpx.Timeout | None = None
@@ -62,6 +70,7 @@ class McpClient(httpx.AsyncClient):
             request_timeout=request_timeout,
         )
         await self._notify("notifications/initialized")
+        self._initialized = True
         return result
 
     async def list_tools(
@@ -127,6 +136,9 @@ class McpClient(httpx.AsyncClient):
     async def aclose(self) -> None:
         process = self._process
         self._process = None
+        if self._stderr_task is not None:
+            self._stderr_task.cancel()
+            self._stderr_task = None
         if process is not None and process.returncode is None:
             process.terminate()
             try:
@@ -152,7 +164,21 @@ class McpClient(httpx.AsyncClient):
             "method": method,
             "params": params,
         }
-        response = await self._post(payload, request_timeout=request_timeout)
+        if method != "initialize" and self._stdio_crashed():
+            # A restarted server knows nothing of the old session: redo the handshake.
+            await self.initialize(request_timeout=request_timeout)
+        try:
+            response = await self._post(payload, request_timeout=request_timeout)
+        except GatewayError as exc:
+            if method == "initialize" or not self._session_expired(exc):
+                raise
+            # The server forgot our session (restart, expiry). It rejected the
+            # request without running it, so re-initialising and replaying once
+            # is safe even for tools/call.
+            self.session_id = None
+            self.headers.pop("Mcp-Session-Id", None)
+            await self.initialize(request_timeout=request_timeout)
+            response = await self._post(payload, request_timeout=request_timeout)
         if response is None or response.get("id") != request_id:
             raise GatewayError(
                 ErrorCode.PROVIDER_ERROR,
@@ -173,6 +199,24 @@ class McpClient(httpx.AsyncClient):
                 details={"failure_kind": "protocol_error"},
             )
         return result
+
+    def _session_expired(self, exc: GatewayError) -> bool:
+        return (
+            self._command is None
+            and self.session_id is not None
+            and exc.details.get("http_status") == 404
+        )
+
+    def _stdio_crashed(self) -> bool:
+        return (
+            self._command is not None
+            and self._initialized
+            and (self._process is None or self._process.returncode is not None)
+        )
+
+    async def _drain_stderr(self, stream: asyncio.StreamReader) -> None:
+        while line := await stream.readline():
+            self.stderr_tail.append(line.decode("utf-8", errors="replace").rstrip())
 
     async def _notify(self, method: str) -> None:
         await self._post({"jsonrpc": "2.0", "method": method}, allow_empty=True)
@@ -333,7 +377,7 @@ class McpClient(httpx.AsyncClient):
                 *self._args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 env=environment,
             )
         except OSError as exc:
@@ -343,6 +387,9 @@ class McpClient(httpx.AsyncClient):
                 cause=exc,
                 details={"failure_kind": "connection"},
             ) from exc
+        # stderr is always a pipe (requested above); cast for the type checker.
+        stderr = cast(asyncio.StreamReader, self._process.stderr)
+        self._stderr_task = asyncio.create_task(self._drain_stderr(stderr))
         return self._process
 
 

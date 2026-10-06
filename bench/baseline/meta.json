@@ -1,0 +1,42 @@
+{
+  "started_at": "20261006T162406Z",
+  "git_commit": "aeaa8d0",
+  "base_url": "http://localhost:18000",
+  "settings": {
+    "base_url": "http://localhost:18000",
+    "model": "eval-router",
+    "failover_model": "eval-chat",
+    "routing_model": "eval-router",
+    "compat_model": "eval-chat",
+    "mcp_server_url": "http://fake-mcp:4200/mcp",
+    "requests": "50",
+    "concurrency": "5",
+    "load_duration": "30.0",
+    "load_concurrency": "10",
+    "out": "bench/.baseline-run",
+    "baseline": "None",
+    "thresholds": "bench/thresholds.yaml"
+  },
+  "tools": {
+    "evaluate": {
+      "exit_code": 0,
+      "seconds": 2.02,
+      "json": true
+    },
+    "loadtest": {
+      "exit_code": 0,
+      "seconds": 30.14,
+      "json": true
+    },
+    "agent_compat": {
+      "exit_code": 0,
+      "seconds": 1.19,
+      "json": true
+    },
+    "rag_eval": {
+      "exit_code": 0,
+      "seconds": 0.9,
+      "json": true
+    }
+  }
+}

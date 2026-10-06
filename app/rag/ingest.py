@@ -119,9 +119,14 @@ async def _ingest(
                 RagDocument.content_hash == content_hash,
             )
         )
-        if existing is not None and existing.status != "failed":
+        placeholder: RagDocument | None = None
+        if existing is not None and existing.status == "processing":
+            # Started by start_background_ingest: fill in that row, so the id
+            # returned with the 202 stays the document's id.
+            placeholder = existing
+        elif existing is not None and existing.status != "failed":
             return existing
-        if existing is not None:
+        elif existing is not None:
             # A previous attempt failed; drop the placeholder so a retry can succeed.
             await session.delete(existing)
             await session.flush()
@@ -141,19 +146,23 @@ async def _ingest(
             batch_texts = [item.text for item in chunks[offset : offset + _EMBED_BATCH_SIZE]]
             vectors.extend(await _embed_batch(embedder, batch_texts))
 
-        document = RagDocument(
-            collection_id=collection_id,
-            title=str(chunk_metadata.get("title") or source or "Untitled document"),
-            source=source or None,
-            content_type=str(chunk_metadata.get("content_type", "text/plain")),
-            content_hash=content_hash,
-            byte_size=len(content.encode("utf-8")),
-            status="ready",
-            error_message=None,
-            chunk_count=len(chunks),
-            metadata_=chunk_metadata,
-        )
-        session.add(document)
+        fields = {
+            "title": str(chunk_metadata.get("title") or source or "Untitled document"),
+            "source": source or None,
+            "content_type": str(chunk_metadata.get("content_type", "text/plain")),
+            "byte_size": len(content.encode("utf-8")),
+            "status": "ready",
+            "error_message": None,
+            "chunk_count": len(chunks),
+            "metadata_": chunk_metadata,
+        }
+        if placeholder is not None:
+            document = placeholder
+            for name, value in fields.items():
+                setattr(document, name, value)
+        else:
+            document = RagDocument(collection_id=collection_id, content_hash=content_hash, **fields)
+            session.add(document)
         await session.flush()
 
         rows = [
@@ -222,3 +231,62 @@ async def delete_document(db: Any, store: Any, *, collection_id: str, document_i
             collection.chunk_count = max(0, collection.chunk_count - document.chunk_count)
         await session.delete(document)
         return True
+
+
+async def start_background_ingest(
+    db: Database,
+    *,
+    collection_id: str,
+    content: str,
+    source: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> tuple[RagDocument, bool]:
+    """Create a ``processing`` row for a document ingested in the background.
+
+    Returns the row and whether work should start: an identical document that
+    is already ready or processing is returned as-is instead.
+    """
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    chunk_metadata = dict(metadata or {})
+    async with db.session() as session:
+        existing = await session.scalar(
+            select(RagDocument).where(
+                RagDocument.collection_id == collection_id,
+                RagDocument.content_hash == content_hash,
+            )
+        )
+        if existing is not None and existing.status != "failed":
+            return existing, False
+        if existing is not None:
+            await session.delete(existing)
+            await session.flush()
+        document = RagDocument(
+            collection_id=collection_id,
+            title=str(chunk_metadata.get("title") or source or "Untitled document"),
+            source=source or None,
+            content_type=str(chunk_metadata.get("content_type", "text/plain")),
+            content_hash=content_hash,
+            byte_size=len(content.encode("utf-8")),
+            status="processing",
+            chunk_count=0,
+            metadata_=chunk_metadata,
+        )
+        session.add(document)
+        await session.flush()
+        return document, True
+
+
+async def recover_interrupted(db: Database) -> int:
+    """Fail documents left ``processing`` by a restart, so they can be uploaded again."""
+    async with db.session() as session:
+        stuck = list(
+            (
+                await session.scalars(select(RagDocument).where(RagDocument.status == "processing"))
+            ).all()
+        )
+        for document in stuck:
+            document.status = "failed"
+            document.error_message = (
+                "Ingestion was interrupted by a gateway restart; upload the document again."
+            )
+    return len(stuck)

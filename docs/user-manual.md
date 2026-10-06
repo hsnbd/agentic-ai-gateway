@@ -278,41 +278,101 @@ In the console, open **RAG → Create collection**, then upload documents (see
 section 9.13). Or use the API:
 
 ```bash
-# Create a collection
+# Create a collection; optionally declare metadata fields to filter by
 curl -X POST http://localhost:4000/v1/rag/collections \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"name":"handbook","description":"Staff handbook"}'
+  -d '{"name":"handbook","description":"Staff handbook","filterable_fields":["department"]}'
 
-# Add a document (JSON body, or a multipart file upload)
+# Add text as JSON...
 curl -X POST http://localhost:4000/v1/rag/collections/<id>/documents \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d '{"name":"refunds.txt","content":"Refunds are issued within 14 days..."}'
+  -d '{"title":"Refunds","source":"refunds.md","content":"Refunds are issued within 14 days...","metadata":{"department":"support"}}'
+
+# ...or upload a file
+curl -X POST http://localhost:4000/v1/rag/collections/<id>/documents \
+  -H "Authorization: Bearer $KEY" -F file=@policy.pdf
 ```
 
-Each document is split into chunks, embedded, and stored. Text documents are
-supported today.
+- **File types:** `.txt`, `.md`, `.html`, `.pdf`, and `.docx`. Scanned PDFs
+  without a text layer are refused; run OCR first.
+- **Large documents** (over `RAG_BACKGROUND_INGEST_BYTES`, 200 KB by default)
+  are ingested in the background: the upload returns **202** with status
+  `processing`. Poll the document until it is `ready` or `failed` (a failure
+  says why). Documents over `RAG_MAX_DOCUMENT_BYTES` are refused with 413.
+- **Updating a document:** upload it again with the same `source` (file name).
+  Once the new version is ready, the old one is removed. Send
+  `"replace_existing": false` to keep both.
+- Each document is split into chunks, embedded, and stored. Uploading identical
+  content twice does nothing the second time.
 
-### 7.2 Check what will be retrieved
+### 7.2 Who can use a collection
+
+A collection belongs to whoever created it:
+
+| Created with | Owner | Who can read and search it | Who can change it |
+|---|---|---|---|
+| A key in a team | That team | Every key in the team | Every key in the team |
+| A key without a team | That key | That key | That key |
+| The master key or a console admin | Nobody (shared) | Every key | Operators only |
+
+To any other key, a collection it cannot read does not exist (404). Console
+admins see every collection; console viewers can read them all. Names only
+need to be unique per owner.
+
+### 7.3 Check what will be retrieved
 
 Use the console's **retrieval test** (Figure 9.14), or `POST /v1/rag/search`, to see which
 chunks match a question and how well they score. If results are poor, the chunk
 inspector usually shows why: a chunk boundary split a table, or a document
 ingested as one block.
 
-### 7.3 Ask a grounded question
+### 7.4 Ask a grounded question
 
 ```python
 reply = client.chat.completions.create(
     model="gpt-4o",
-    messages=[{"role": "user", "content": "What is our refund policy?"}],
-    extra_body={"aigw": {"rag": {"collection_id": "<id>", "top_k": 4}}},
+    messages=[{"role": "user", "content": "What does error E-4471 mean?"}],
+    extra_body={"aigw": {"rag": {
+        "collection_id": "<id>",
+        "top_k": 4,
+        "search_mode": "hybrid",
+        "filters": {"department": "support"},
+    }}},
 )
 reply.aigw["sources"]    # the chunks the answer was based on
 ```
 
-Options inside `rag`: `top_k`, `min_score`, `mode` (`system` or `user`),
-`max_context_tokens`, and metadata `filters`. Retrieved text passes through the
-input guardrails, so a document cannot slip content past your policies.
+Options inside `rag`:
+
+| Option | Meaning |
+|---|---|
+| `top_k`, `min_score` | How many chunks, and the lowest score kept |
+| `search_mode` | `vector` (embedding similarity) or `hybrid`: similarity plus keyword search, best when questions hinge on exact codes, product numbers, or names |
+| `rerank_model` | A chat model that reorders the candidates by how well they answer the question. Adds a model call; if it fails, the original order is kept. A collection can set a default in its `metadata.rerank_model` |
+| `filters` | Exact matches on `document_id`, `source`, or a field the collection declared in `filterable_fields` |
+| `diversity` | 0–1; higher values avoid near-duplicate chunks |
+| `mode` | Put the context in the `system` prompt or the `user` message |
+| `max_context_tokens` | Cap on retrieved text added to the prompt |
+
+Retrieved text passes through the input guardrails, so a document cannot slip
+content past your policies.
+
+### 7.5 Recovering a collection
+
+Vectors live in Redis. If Redis loses its data (a restart without persistence,
+`FLUSHALL`, failover to an empty replica), the chunk text is still in Postgres:
+
+```bash
+# Is the index healthy? Compares stored chunks with searchable vectors.
+curl http://localhost:4000/v1/rag/collections/<id>/index -H "Authorization: Bearer $KEY"
+
+# Rebuild the vectors from the stored chunks (runs in the background).
+curl -X POST http://localhost:4000/v1/rag/collections/<id>/reindex -H "Authorization: Bearer $KEY"
+```
+
+The status shows `in_sync`, and the last reindex's outcome. If only the index
+disappeared (the vectors are still there), the gateway rebuilds it by itself on
+the next search.
 
 ---
 
@@ -329,6 +389,12 @@ URL) or stdio (a command run on the gateway host). Registering triggers tool dis
 if it fails, the console shows why. Registering or changing servers needs the
 master key or a console admin, because a stdio server runs a command on the
 host.
+
+- **Credentials** in a server's environment variables or headers (for example an
+  `Authorization` header) are encrypted in the database when
+  `SECRETS_ENCRYPTION_KEY` is set, and their values are never shown again.
+- **Timeouts:** a server can set its own `timeout_seconds`; otherwise
+  `MCP_TIMEOUT_SECONDS` applies.
 
 ### 8.2 Use the tools in a chat request
 
@@ -348,8 +414,24 @@ reply.aigw["tool_calls_executed"]   # how many tools the gateway ran
 - Budgets, guardrails, and logging apply once per request; cost is summed across
   every model call in the loop.
 
-You can also call a tool directly with `POST /v1/mcp/tools/call`. Direct tool
-calls are not yet logged, costed, or guardrailed.
+You can also call a tool directly with `POST /v1/mcp/tools/call`, under the same
+rules as below.
+
+### 8.3 Controlling and auditing tool use
+
+| Control | How |
+|---|---|
+| **Which servers and tools a key may use** | `allowed_mcp_servers` (ids or names) and `allowed_tools` (`server__tool`, `*` wildcards) on the key; empty means all. Other tools are hidden from that key's listings, not offered to its model, and refused if called |
+| **Guardrails on tool traffic** | Policies with `apply_to_tools: true` check tool arguments with their input rules and tool results with their output rules (section 12) |
+| **Result size** | Results longer than `MCP_MAX_RESULT_CHARS` are truncated before the model sees them |
+| **Audit** | Every call is recorded: who, which tool, outcome, duration, result size, and any guardrail; arguments are stored only as a hash. See the **Tool calls** table on the MCP page (Figure 9.16) or `GET /admin/api/tool-calls` |
+
+A server that keeps failing is paused: its circuit breaker opens and calls fail
+fast until a probe succeeds, instead of every agent loop waiting for a timeout.
+The gateway also re-checks every server in the background
+(`MCP_HEALTH_INTERVAL_SECONDS`), re-establishes expired MCP sessions, and
+restarts a crashed stdio server. A stdio server's recent error output is shown
+when you refresh it.
 
 ---
 
@@ -436,12 +518,13 @@ buttons to **edit limits**, **regenerate** the secret, **disable** or
 **To create a key:**
 
 1. Select **Create key**.
-2. Enter a name. Optionally set a team, budget, rate limits, and allowed models.
+2. Enter a name. Optionally set a team, allowed models, allowed MCP servers and
+   tools, a budget, and rate limits.
 3. Select **Create**.
 
 ![Create virtual key dialog](images/manual/04-keys-create.png)
 
-*Figure 9.4: Creating a key. Only the name is required.*
+*Figure 9.4: Creating a key. Only the name is required; here the key may call only two tools.*
 
 4. Copy the secret from the confirmation dialog, then select **Done**.
 
@@ -571,11 +654,12 @@ chunking settings, with three tabs:
 - **Chunks:** exactly what was indexed. Check here when retrieval returns
   something odd.
 - **Retrieval test:** run a query and see the scored results before any
-  application depends on the collection.
+  application depends on the collection. Choose **Hybrid** (similarity plus
+  keyword matching, the default) or **Vector**.
 
 ![RAG retrieval test](images/manual/14-rag-retrieval.png)
 
-*Figure 9.14: A retrieval test. The best-matching chunk is shown with its similarity score and source document.*
+*Figure 9.14: A retrieval test in hybrid mode. The best-matching chunk is shown with its score and source document.*
 
 ### 9.14 MCP
 
@@ -594,11 +678,20 @@ parameters. The buttons at the top of the panel:
 Each tool has a **tool tester**: fill in the parameters and select **Invoke
 tool** to call it directly.
 
+![MCP tool-call audit log](images/manual/15b-mcp-tool-calls.png)
+
+*Figure 9.16: The tool-call audit log: each call's tool, outcome, source (agent loop or direct), key, duration, result size, and any guardrail that acted. Here a secret in a tool result was redacted.*
+
+Below the servers, **Tool calls** lists every MCP tool call. Filter by status:
+`ok`, `tool_error` (the tool reported a failure), `failed` (the server could not
+be reached), `denied` (outside the key's allowlist), `blocked` (a guardrail),
+`invalid` (arguments did not match the schema), or `unavailable`.
+
 ### 9.15 Playground
 
 ![Playground](images/manual/16-playground.png)
 
-*Figure 9.16: The playground: parameters on the left, the conversation in the middle, and the response inspector on the right.*
+*Figure 9.17: The playground: parameters on the left, the conversation in the middle, and the response inspector on the right.*
 
 Use the playground to try a model and see exactly how the gateway handled the
 request. It is admin-only because it spends real money.
@@ -621,7 +714,7 @@ like any other request, and appear in **Logs**.
 
 ![Settings](images/manual/17-settings.png)
 
-*Figure 9.17: Settings: console accounts, system information, provider status, and optional subsystems.*
+*Figure 9.18: Settings: console accounts, system information, provider status, and optional subsystems.*
 
 - **Admin users:** select **Add user** to create an account; change a user's
   role in the **Role** column, or deactivate or delete them. Your own row is
@@ -725,6 +818,7 @@ will not match a provider invoice to the cent.
 | **Requests in flight** | Extra concurrent requests get `429` |
 | **Allowed models** | Other models get `403`; empty list means all |
 | **Allowed routes** | Restrict a key to, for example, embeddings only |
+| **Allowed MCP servers / tools** | Other servers' tools are hidden and refused (section 8.3) |
 | **Expiry** | The key stops working after the date |
 
 ### 11.2 Teams
@@ -745,6 +839,8 @@ sharing its budget.
 
 Policies live in `config/guardrails.yaml`. A `default` policy is required; keys
 can be bound to others, and requests can choose one with `guardrail_policy`.
+A policy with `apply_to_tools: true` also screens MCP tool arguments and
+results (the shipped `default` and `strict` policies do).
 
 ```yaml
 policies:
@@ -816,9 +912,14 @@ enough in meaning to one asked before, not only when the text is identical.
 Prompt and reply bodies are logged only if `LOG_REQUEST_BODIES=true`, and are
 shown in the console only behind an explicit **reveal**.
 
-**Worth alerting on:** a deployment's circuit breaker staying `open`; a falling
-success rate; spend rising faster than usual; a cache hit ratio suddenly
-dropping to zero.
+RAG and MCP have their own metrics: `aigw_rag_retrievals_total` (with empty
+results), `aigw_rag_ingestions_total` (including failures), latency histograms,
+`aigw_mcp_tool_calls_total` by server, tool, and outcome, and
+`aigw_mcp_breaker_open` per server.
+
+**Worth alerting on:** a deployment's or MCP server's circuit breaker staying
+open; a falling success rate; spend rising faster than usual; a cache hit ratio
+suddenly dropping to zero; RAG searches returning nothing more often than usual.
 
 ---
 
@@ -856,6 +957,10 @@ with a stable `code`.
 | A provider shows no credential in Settings | Set its `*_API_KEY` in the environment and restart. Keys cannot be edited from the browser, by design. |
 | Ollama model not found | Pull it on the Ollama host: `ollama pull <model>`. |
 | MCP server registration fails | The console shows the reason: an unreachable URL, a command not on `PATH`, or a failed handshake. |
+| Tool calls fail with "calls are paused" | The server's circuit breaker opened after repeated failures; it retries automatically. Refresh the server to see its error output. |
+| The gateway will not start: "SECRETS_ENCRYPTION_KEY" | Stored MCP credentials are encrypted and the key is missing or wrong. Restore the key (keep old keys listed after the new one when rotating). |
+| RAG searches return nothing after a Redis restart | Check `GET …/collections/<id>/index`; if it is not in sync, `POST …/reindex`. |
+| A document stays `failed` with "interrupted by a gateway restart" | It was being ingested when the gateway stopped; upload it again. |
 
 ---
 
@@ -887,5 +992,10 @@ The most commonly changed settings. Every setting is an environment variable.
 | `TRACING_ENABLED` | `false` | OpenTelemetry traces |
 | `JWT_ACCESS_TTL_SECONDS` | `3600` | Console sign-in length |
 | `UI_ENABLED` | `true` | Serve the console |
+| `SECRETS_ENCRYPTION_KEY` | — | Encrypts stored MCP server credentials |
+| `MCP_MAX_RESULT_CHARS` | `20000` | Longest tool result passed to the model |
+| `MCP_HEALTH_INTERVAL_SECONDS` | `60` | Background MCP health checks (`0` disables) |
+| `RAG_MAX_DOCUMENT_BYTES` | `10000000` | Largest document accepted |
+| `RAG_BACKGROUND_INGEST_BYTES` | `200000` | Documents this large ingest in the background |
 
 The full list is in [docs/configuration.md](configuration.md).

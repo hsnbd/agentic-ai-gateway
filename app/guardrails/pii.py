@@ -20,9 +20,7 @@ _ENTITY_PATTERNS: dict[str, re.Pattern[str]] = {
         r"(?:\(\d{2,4}\)|\d{2,4})[\s.-]\d{3,4}[\s.-]\d{4})"
         r"(?![\w-])"
     ),
-    "SSN": re.compile(
-        r"(?<![\d-])(?!000|666|9\d\d)\d{3}[- ](?!00)\d{2}[- ](?!0000)\d{4}(?![\d-])"
-    ),
+    "SSN": re.compile(r"(?<![\d-])(?!000|666|9\d\d)\d{3}[- ](?!00)\d{2}[- ](?!0000)\d{4}(?![\d-])"),
     "CREDIT_CARD": _CARD_PATTERN,
     "IP_ADDRESS": re.compile(
         r"(?<![\d.])(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
@@ -117,9 +115,7 @@ class PiiRule(Rule):
 def _candidates(text: str, entity: str) -> list[tuple[int, int]]:
     pattern = _ENTITY_PATTERNS[entity]
     if entity == "CREDIT_CARD":
-        return [
-            (m.start(1), m.end(1)) for m in pattern.finditer(text) if _passes_luhn(m.group(1))
-        ]
+        return [(m.start(1), m.end(1)) for m in pattern.finditer(text) if _passes_luhn(m.group(1))]
     return [m.span() for m in pattern.finditer(text)]
 
 

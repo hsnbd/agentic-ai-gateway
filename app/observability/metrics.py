@@ -308,3 +308,81 @@ aigw_provider_healthy = PROVIDER_HEALTH
 aigw_guardrail_actions_total = GUARDRAIL_ACTIONS
 aigw_active_requests = ACTIVE_REQUESTS
 aigw_rate_limit_hits_total = RATE_LIMIT_HITS
+
+# -- RAG and MCP ------------------------------------------------------------
+
+RAG_RETRIEVALS = cast(
+    Counter,
+    _registered_metric(
+        Counter,
+        "aigw_rag_retrievals_total",
+        "RAG searches by search mode and whether anything was found",
+        ("search_mode", "outcome"),
+    ),
+)
+RAG_RETRIEVAL_SECONDS = cast(
+    Histogram,
+    _registered_metric(
+        Histogram,
+        "aigw_rag_retrieval_seconds",
+        "RAG search latency (embedding the query plus vector/keyword search)",
+        ("search_mode",),
+        (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5),
+    ),
+)
+RAG_INGESTIONS = cast(
+    Counter,
+    _registered_metric(
+        Counter,
+        "aigw_rag_ingestions_total",
+        "RAG document ingestions by outcome and whether they ran in the background",
+        ("outcome", "mode"),
+    ),
+)
+RAG_INGEST_SECONDS = cast(
+    Histogram,
+    _registered_metric(
+        Histogram,
+        "aigw_rag_ingest_seconds",
+        "RAG ingestion time (chunking, embedding, and storing)",
+        ("mode",),
+        (0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120),
+    ),
+)
+MCP_TOOL_CALLS = cast(
+    Counter,
+    _registered_metric(
+        Counter,
+        "aigw_mcp_tool_calls_total",
+        "MCP tool calls by server, tool, and outcome",
+        ("server", "tool", "status"),
+    ),
+)
+MCP_TOOL_CALL_SECONDS = cast(
+    Histogram,
+    _registered_metric(
+        Histogram,
+        "aigw_mcp_tool_call_seconds",
+        "MCP tool call latency, including scope and guardrail checks",
+        ("server",),
+        (0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
+    ),
+)
+MCP_BREAKER_OPEN = cast(
+    Gauge,
+    _registered_metric(
+        Gauge,
+        "aigw_mcp_breaker_open",
+        "1 while an MCP server's circuit breaker is pausing its tool calls",
+        ("server",),
+    ),
+)
+RAG_RERANKS = cast(
+    Counter,
+    _registered_metric(
+        Counter,
+        "aigw_rag_reranks_total",
+        "RAG rerank attempts: reranked, or fell back to the retrieval order",
+        ("outcome",),
+    ),
+)

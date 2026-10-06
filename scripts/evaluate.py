@@ -183,9 +183,7 @@ class Evaluator:
             return Attempt(
                 ok=False, latency_s=time.perf_counter() - started, status=0, error=str(exc)
             )
-        return Attempt(
-            ok=True, latency_s=time.perf_counter() - started, status=200, ttft_s=ttft
-        )
+        return Attempt(ok=True, latency_s=time.perf_counter() - started, status=200, ttft_s=ttft)
 
     # -- criteria -----------------------------------------------------------
 
@@ -231,9 +229,7 @@ class Evaluator:
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
             "total_cost_usd": round(total_cost, 6),
-            "cost_per_successful_request_usd": (
-                round(total_cost / len(ok), 6) if ok else None
-            ),
+            "cost_per_successful_request_usd": (round(total_cost / len(ok), 6) if ok else None),
         }
         if total_cost == 0.0 and ok:
             section.notes.append(
@@ -281,8 +277,7 @@ class Evaluator:
         # and the harness misreports it as a similarity false positive. The
         # nonce keeps the check meaningful against a warm cache.
         control = (
-            "Explain the rules of contract bridge in detail. "
-            f"Reference number {uuid.uuid4()}."
+            f"Explain the rules of contract bridge in detail. Reference number {uuid.uuid4()}."
         )
 
         async with self._client() as client:
@@ -502,6 +497,87 @@ class Evaluator:
             section.notes.append(f"Unreachable or failing surfaces: {', '.join(unreachable)}")
         return section
 
+    async def agentic(
+        self, samples: int, *, prompt: str, mcp_server_url: str | None = None
+    ) -> Section:
+        """Server-side agent loop: the gateway offers MCP tools, runs the ones the
+        model calls, and loops until the model answers."""
+        section = Section("agentic_tool_calls")
+        registered: str | None = None
+        async with self._client() as client:
+            servers = (await client.get("/v1/mcp/servers")).json() if samples > 0 else []
+            healthy = [s["id"] for s in servers if s.get("health_status") == "healthy"]
+            if not healthy and mcp_server_url:
+                created = await client.post(
+                    "/v1/mcp/servers",
+                    json={
+                        "name": f"eval-{uuid.uuid4().hex[:8]}",
+                        "transport": "http",
+                        "url": mcp_server_url,
+                        "tool_prefix": f"eval{uuid.uuid4().hex[:6]}",
+                    },
+                )
+                if created.status_code == 201 and created.json().get("health_status") == "healthy":
+                    registered = created.json()["id"]
+                    healthy = [registered]
+            if not healthy:
+                section.findings = {"measured": False}
+                section.notes.append(
+                    "No healthy MCP server; register one or pass --mcp-server-url."
+                )
+                return section
+
+            latencies: list[float] = []
+            tool_calls: list[int] = []
+            stops: dict[str, int] = {}
+            succeeded = 0
+            for _ in range(samples):
+                started = time.perf_counter()
+                response = await client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "aigw": {"mcp": {"servers": healthy[:1], "max_iterations": 4}},
+                        "no_cache": True,
+                    },
+                )
+                latencies.append(time.perf_counter() - started)
+                if response.status_code != 200:
+                    stops["error"] = stops.get("error", 0) + 1
+                    continue
+                extras = response.json().get("aigw") or {}
+                stop = str(extras.get("stop_reason") or "unknown")
+                stops[stop] = stops.get(stop, 0) + 1
+                executed = int(extras.get("tool_calls_executed") or 0)
+                tool_calls.append(executed)
+                if stop == "completed" and executed > 0:
+                    succeeded += 1
+            if registered:
+                await client.delete(f"/v1/mcp/servers/{registered}")
+
+        hops = [calls + 1 for calls in tool_calls] or [1]
+        section.findings = {
+            "measured": True,
+            "samples": samples,
+            "tool_loop_success_rate": round(succeeded / samples, 4) if samples else 0.0,
+            "tool_calls_per_request": round(statistics.mean(tool_calls), 2) if tool_calls else 0.0,
+            "stop_reasons": stops,
+            "max_iterations_rate": round(stops.get("max_iterations", 0) / samples, 4)
+            if samples
+            else 0.0,
+            "latency_p50_s": round(_percentile(latencies, 50), 3),
+            "latency_p95_s": round(_percentile(latencies, 95), 3),
+            "latency_per_hop_s": round(statistics.mean(latencies) / statistics.mean(hops), 3)
+            if latencies
+            else 0.0,
+        }
+        if succeeded < samples:
+            section.notes.append(
+                "Some agent loops did not complete with a tool call; see stop_reasons."
+            )
+        return section
+
 
 def _render(sections: list[Section], as_json: bool) -> None:
     if as_json:
@@ -552,6 +628,9 @@ async def run(args: argparse.Namespace) -> int:
         await evaluator.routing(),
         await evaluator.guardrails(),
         await evaluator.capabilities(),
+        await evaluator.agentic(
+            args.agentic_samples, prompt=args.agentic_prompt, mcp_server_url=args.mcp_server_url
+        ),
     ]
     _render(sections, args.json)
 
@@ -590,6 +669,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stream-samples", type=int, default=5)
     parser.add_argument("--cache-repeats", type=int, default=6)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--agentic-samples", type=int, default=5, help="Agent-loop requests (0 skips)"
+    )
+    parser.add_argument(
+        "--agentic-prompt",
+        default="__tool__:add What is 2 + 3? Use the add tool.",
+        help="Prompt that should make the model call an MCP tool",
+    )
+    parser.add_argument(
+        "--mcp-server-url",
+        default=None,
+        help="Register this MCP server for the agentic probe when none is healthy",
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable output")
     parser.add_argument(
         "--min-success-rate",

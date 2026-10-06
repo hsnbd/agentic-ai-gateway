@@ -95,9 +95,7 @@ class SemanticCache:
         registry = ctx.state.registry
         model = registry.resolve_alias(ctx.request.model)
         tenant_id = ctx.key_id or getattr(ctx.virtual_key, "id", None) or ctx.team_id or "unscoped"
-        system_prompt_hash = hashlib.sha256(
-            ctx.request.system_prompt().encode("utf-8")
-        ).hexdigest()
+        system_prompt_hash = hashlib.sha256(ctx.request.system_prompt().encode("utf-8")).hexdigest()
         tool_payload = [tool.model_dump(mode="json") for tool in ctx.request.tools]
         tool_hash = hashlib.sha256(
             json.dumps(tool_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -397,9 +395,7 @@ class SemanticCache:
             attributes = cls._map_get(entry, "extra_attributes")
             if not isinstance(attributes, dict):
                 continue
-            matches.append(
-                {cls._as_text(k): cls._as_text(v) for k, v in attributes.items()}
-            )
+            matches.append({cls._as_text(k): cls._as_text(v) for k, v in attributes.items()})
         return matches
 
     @staticmethod

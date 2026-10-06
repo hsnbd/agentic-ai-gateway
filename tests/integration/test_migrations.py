@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -92,7 +93,7 @@ def test_existing_create_all_schema_can_be_stamped(empty_database: str) -> None:
         empty_database,
         lambda conn: conn.execute(text("SELECT version_num FROM alembic_version")).scalar(),
     )
-    assert version == "0001"
+    assert version == ScriptDirectory.from_config(migrate.alembic_config()).get_current_head()
     # Upgrading a stamped database is a no-op, not a "table already exists" error.
     migrate.upgrade(url=empty_database)
 

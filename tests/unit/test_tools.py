@@ -65,6 +65,9 @@ class _Registry:
             for name in ("ok", "bad")
         ]
 
+    def server_name(self, server_id: str) -> str:
+        return server_id
+
     def resolve(self, name: str) -> tuple[str, str]:
         return "server", name.split("__", 1)[1]
 
@@ -110,9 +113,7 @@ def _response(*, tool_call: bool = False) -> ChatResponse:
     message = Message(
         role=Role.ASSISTANT,
         content=None if tool_call else "done",
-        tool_calls=[ToolCall(id="call-1", name="demo__ok", arguments="{}")]
-        if tool_call
-        else [],
+        tool_calls=[ToolCall(id="call-1", name="demo__ok", arguments="{}")] if tool_call else [],
     )
     return ChatResponse(
         model="test",

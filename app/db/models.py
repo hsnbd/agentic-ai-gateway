@@ -105,6 +105,10 @@ class VirtualKey(Base, TimestampMixin):
     blocked_models: Mapped[list[str]] = mapped_column(JSONType, default=list)
     guardrail_policy: Mapped[str | None] = mapped_column(String(100))
     allowed_routes: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    #: MCP servers (ids or names) this key may use; empty means all.
+    allowed_mcp_servers: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    #: Namespaced MCP tools (``server__tool``, ``*`` wildcards); empty means all.
+    allowed_tools: Mapped[list[str]] = mapped_column(JSONType, default=list)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -253,8 +257,15 @@ class RagCollection(Base, TimestampMixin):
     __tablename__ = "rag_collections"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
-    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    # Unique per owner, not globally, so one tenant's names don't collide with
+    # (or reveal) another's; enforced in RagService.create_collection.
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[str | None] = mapped_column(Text)
+    # Tenancy (app/rag/access.py). Both null means a global collection. Plain
+    # ids rather than foreign keys: deleting a team must not turn its private
+    # collections global.
+    owner_team_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    owner_key_id: Mapped[str | None] = mapped_column(String(36), index=True)
 
     embedding_model: Mapped[str] = mapped_column(String(255), nullable=False)
     embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -268,6 +279,11 @@ class RagCollection(Base, TimestampMixin):
     documents: Mapped[list[RagDocument]] = relationship(
         back_populates="collection", cascade="all, delete-orphan"
     )
+
+    @property
+    def filterable_fields(self) -> list[str]:
+        """Metadata keys indexed for search filters, declared at creation."""
+        return list((self.metadata_ or {}).get("filterable_fields") or [])
 
 
 class RagDocument(Base, TimestampMixin):
@@ -300,9 +316,7 @@ class RagChunk(Base):
     """Chunk text and metadata. Vectors themselves live in Redis."""
 
     __tablename__ = "rag_chunks"
-    __table_args__ = (
-        UniqueConstraint("document_id", "chunk_index", name="uq_rag_chunk_position"),
-    )
+    __table_args__ = (UniqueConstraint("document_id", "chunk_index", name="uq_rag_chunk_position"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     document_id: Mapped[str] = mapped_column(
@@ -341,6 +355,8 @@ class McpServer(Base, TimestampMixin):
     env: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     url: Mapped[str | None] = mapped_column(String(1024))
     headers: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    #: Per-server request timeout; null uses MCP_TIMEOUT_SECONDS.
+    timeout_seconds: Mapped[float | None] = mapped_column(Float)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     health_status: Mapped[str] = mapped_column(String(20), default="unknown")
@@ -378,3 +394,31 @@ class GuardrailViolation(Base):
     match_count: Mapped[int] = mapped_column(Integer, default=1)
     excerpt: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+
+
+class ToolCallLog(Base):
+    """One row per MCP tool call the gateway made, from an agent loop or directly."""
+
+    __tablename__ = "tool_call_logs"
+    __table_args__ = (Index("ix_tool_call_logs_created", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    request_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    virtual_key_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    team_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    #: "agent" (aigw.mcp loop) or "direct" (POST /v1/mcp/tools/call)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    server_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    tool: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    #: ok, tool_error, failed, denied, blocked, invalid, or unavailable
+    status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    #: SHA-256 of the canonical arguments: correlates calls without storing them.
+    arguments_hash: Mapped[str | None] = mapped_column(String(64))
+    result_chars: Mapped[int] = mapped_column(Integer, default=0)
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    guardrail: Mapped[str | None] = mapped_column(String(255))
+    error: Mapped[str | None] = mapped_column(Text)

@@ -51,16 +51,33 @@ async def retrieve(
     min_score: float = 0.0,
     filters: Mapping[str, str] | None = None,
     diversity: float = 0.0,
+    search_mode: str = "vector",
 ) -> list[RetrievedChunk]:
+    """Retrieve the ``top_k`` chunks most relevant to ``query``.
+
+    ``search_mode="vector"`` ranks by embedding similarity. ``"hybrid"`` also
+    runs a keyword (BM25) search and merges the two rankings by reciprocal-rank
+    fusion, so a chunk containing an exact code or name surfaces even when its
+    embedding is not the closest; scores are then fused ranks in [0, 1], and
+    ``min_score`` applies to them.
+    """
     if top_k <= 0:
         return []
     if not 0.0 <= diversity <= 1.0:
         raise InvalidRequestError("diversity must be between 0 and 1")
+    if search_mode not in SEARCH_MODES:
+        raise InvalidRequestError(f"search_mode must be one of: {', '.join(SEARCH_MODES)}")
     query_vectors = await _embed(embedder, [query])
     if not query_vectors:
         return []
-    fetch_count = top_k * 3 if diversity > 0 else top_k
+    hybrid = search_mode == "hybrid"
+    fetch_count = top_k * 3 if diversity > 0 or hybrid else top_k
     matches = await store.search(collection_id, query_vectors[0], fetch_count, filters=filters)
+    if hybrid:
+        keyword = await store.text_search(
+            collection_id, query, fetch_count, len(query_vectors[0]), filters=filters
+        )
+        matches = fuse_rankings(matches, keyword)
 
     candidates: list[tuple[RetrievedChunk, list[float] | None]] = []
     missing_vectors: list[int] = []
@@ -109,6 +126,35 @@ async def retrieve(
         chosen.append(selected)
         remaining.remove(selected)
     return [candidates[index][0] for index in chosen]
+
+
+#: Retrieval strategies accepted by ``retrieve``.
+SEARCH_MODES = ("vector", "hybrid")
+
+#: Reciprocal-rank-fusion damping: the conventional 60 keeps one list's top
+#: hit from overwhelming agreement between both lists.
+_RRF_K = 60
+
+
+def fuse_rankings(
+    *rankings: Sequence[tuple[str, float, dict[str, Any]]],
+) -> list[tuple[str, float, dict[str, Any]]]:
+    """Merge ranked result lists by reciprocal-rank fusion.
+
+    Each list contributes ``1 / (60 + rank)`` for every chunk it ranks; the
+    sum is normalised so a chunk ranked first by every list scores 1.0. Raw
+    scores are ignored, which is the point: cosine similarities and BM25
+    scores are on incomparable scales, but ranks are not.
+    """
+    fused: dict[str, float] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    for ranking in rankings:
+        for rank, (chunk_id, _, details) in enumerate(ranking, start=1):
+            fused[chunk_id] = fused.get(chunk_id, 0.0) + 1.0 / (_RRF_K + rank)
+            metadata.setdefault(chunk_id, details)
+    best = len(rankings) / (_RRF_K + 1)
+    ordered = sorted(fused.items(), key=lambda item: (-item[1], item[0]))
+    return [(chunk_id, score / best, metadata[chunk_id]) for chunk_id, score in ordered]
 
 
 def _token_count(text: str) -> int:

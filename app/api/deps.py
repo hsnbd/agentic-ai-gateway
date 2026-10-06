@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 
 from app.auth.console import decode_token
-from app.auth.keys import KeyService
+from app.auth.keys import KeyService, ResolvedKey
 from app.auth.sessions import TokenRevocation
 from app.core.errors import GatewayError
 from app.core.state import GatewayState
@@ -32,9 +32,7 @@ BearerCredentials = Annotated[HTTPAuthorizationCredentials | None, Depends(_bear
 
 
 def token_revocation(state: GatewayState) -> TokenRevocation:
-    return TokenRevocation(
-        state.redis, user_ttl_seconds=state.settings.jwt_refresh_ttl_seconds
-    )
+    return TokenRevocation(state.redis, user_ttl_seconds=state.settings.jwt_refresh_ttl_seconds)
 
 
 async def _require_live(state: GatewayState, claims: dict[str, Any]) -> None:
@@ -90,6 +88,10 @@ class GatewayPrincipal:
     kind: str
     identifier: str
     role: str = "application"
+    #: The virtual key's team, for per-team resources such as RAG collections.
+    team_id: str | None = None
+    #: The resolved virtual key (allowlists for MCP servers and tools).
+    key: ResolvedKey | None = field(default=None, repr=False, compare=False)
     #: The raw credential, so routes that run the chat pipeline can charge the
     #: caller's own key. Never logged or returned.
     credential: str = field(default="", repr=False)
@@ -118,7 +120,12 @@ async def require_gateway_principal(
     key = await KeyService(state.db, state.redis).lookup(raw)
     if key is not None and key.is_valid():
         return GatewayPrincipal(
-            kind="virtual_key", identifier=key.id, role="application", credential=raw
+            kind="virtual_key",
+            identifier=key.id,
+            role="application",
+            team_id=key.team_id,
+            key=key,
+            credential=raw,
         )
 
     try:

@@ -48,6 +48,9 @@ class InMemoryStore:
     async def upsert(self, collection_id: str, payloads: list[dict[str, Any]]) -> None:
         self.upserts.append(payloads)
 
+    def declare_fields(self, collection_id: str, fields: Any) -> None:
+        self.declared = (collection_id, list(fields))
+
     async def search(
         self,
         collection_id: str,
@@ -316,13 +319,9 @@ class VectorStore(InMemoryStore):
         for payload in payloads:
             self.vectors[payload["chunk_id"]] = list(payload["vector"])
 
-    async def get_vectors(
-        self, collection_id: str, chunk_ids: list[str]
-    ) -> dict[str, list[float]]:
+    async def get_vectors(self, collection_id: str, chunk_ids: list[str]) -> dict[str, list[float]]:
         return {
-            chunk_id: self.vectors[chunk_id]
-            for chunk_id in chunk_ids
-            if chunk_id in self.vectors
+            chunk_id: self.vectors[chunk_id] for chunk_id in chunk_ids if chunk_id in self.vectors
         }
 
 
@@ -356,9 +355,7 @@ async def test_list_chunks_paginates_and_filters_by_document() -> None:
         assert len(page_one) == 2
         assert {chunk.id for chunk in page_one}.isdisjoint({chunk.id for chunk in page_two})
 
-        filtered, filtered_total = await service.list_chunks(
-            "collection-1", document_id=second.id
-        )
+        filtered, filtered_total = await service.list_chunks("collection-1", document_id=second.id)
         assert filtered_total == len(filtered) >= 1
         assert {chunk.document_id for chunk in filtered} == {second.id}
         assert first.id not in {chunk.document_id for chunk in filtered}

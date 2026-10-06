@@ -70,9 +70,7 @@ async def test_chat_translation_and_response_parsing(deployment: Deployment) -> 
 @respx.mock
 async def test_sampling_options_and_no_default_authorization(deployment: Deployment) -> None:
     route = respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(
-            200, json={"message": {"role": "assistant", "content": "ok"}}
-        )
+        return_value=httpx.Response(200, json={"message": {"role": "assistant", "content": "ok"}})
     )
     async with httpx.AsyncClient() as client:
         await OllamaProvider(client).chat(
@@ -113,9 +111,7 @@ async def test_tool_call_request_and_response_translation(deployment: Deployment
                 "message": {
                     "role": "assistant",
                     "content": "",
-                    "tool_calls": [
-                        {"function": {"name": "lookup", "arguments": {"q": "x"}}}
-                    ],
+                    "tool_calls": [{"function": {"name": "lookup", "arguments": {"q": "x"}}}],
                 },
                 "done_reason": "stop",
             },
@@ -159,9 +155,7 @@ async def test_tool_call_request_and_response_translation(deployment: Deployment
 @respx.mock
 async def test_image_data_uri_is_sent_as_raw_base64(deployment: Deployment) -> None:
     route = respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(
-            200, json={"message": {"role": "assistant", "content": "seen"}}
-        )
+        return_value=httpx.Response(200, json={"message": {"role": "assistant", "content": "seen"}})
     )
     async with httpx.AsyncClient() as client:
         await OllamaProvider(client).chat(
@@ -181,32 +175,31 @@ async def test_image_data_uri_is_sent_as_raw_base64(deployment: Deployment) -> N
         )
 
     sent = json.loads(route.calls[0].request.content)
-    assert sent["messages"] == [
-        {"role": "user", "content": "describe", "images": ["aGVsbG8="]}
-    ]
+    assert sent["messages"] == [{"role": "user", "content": "describe", "images": ["aGVsbG8="]}]
 
 
 @pytest.mark.asyncio
 @respx.mock
 async def test_jsonl_stream_yields_content_and_final_usage(deployment: Deployment) -> None:
-    body = "\n".join(
-        [
-            json.dumps({"message": {"role": "assistant", "content": "Hel"}, "done": False}),
-            json.dumps({"message": {"role": "assistant", "content": "lo"}, "done": False}),
-            json.dumps(
-                {
-                    "message": {"role": "assistant", "content": ""},
-                    "done": True,
-                    "done_reason": "stop",
-                    "prompt_eval_count": 3,
-                    "eval_count": 2,
-                }
-            ),
-        ]
-    ) + "\n"
-    respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(200, text=body)
+    body = (
+        "\n".join(
+            [
+                json.dumps({"message": {"role": "assistant", "content": "Hel"}, "done": False}),
+                json.dumps({"message": {"role": "assistant", "content": "lo"}, "done": False}),
+                json.dumps(
+                    {
+                        "message": {"role": "assistant", "content": ""},
+                        "done": True,
+                        "done_reason": "stop",
+                        "prompt_eval_count": 3,
+                        "eval_count": 2,
+                    }
+                ),
+            ]
+        )
+        + "\n"
     )
+    respx.post("http://localhost:11434/api/chat").mock(return_value=httpx.Response(200, text=body))
     async with httpx.AsyncClient() as client:
         chunks = [
             chunk
@@ -230,21 +223,20 @@ async def test_jsonl_stream_yields_content_and_final_usage(deployment: Deploymen
 @pytest.mark.asyncio
 @respx.mock
 async def test_stream_emits_tool_call_deltas(deployment: Deployment) -> None:
-    body = json.dumps(
-        {
-            "message": {
-                "role": "assistant",
-                "tool_calls": [
-                    {"function": {"name": "lookup", "arguments": {"q": "x"}}}
-                ],
-            },
-            "done": True,
-            "done_reason": "stop",
-        }
-    ) + "\n"
-    respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(200, text=body)
+    body = (
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{"function": {"name": "lookup", "arguments": {"q": "x"}}}],
+                },
+                "done": True,
+                "done_reason": "stop",
+            }
+        )
+        + "\n"
     )
+    respx.post("http://localhost:11434/api/chat").mock(return_value=httpx.Response(200, text=body))
     async with httpx.AsyncClient() as client:
         chunks = [
             chunk
@@ -333,9 +325,7 @@ async def test_model_not_found_error_recommends_pull(deployment: Deployment) -> 
 @respx.mock
 async def test_gateway_only_fields_are_not_forwarded(deployment: Deployment) -> None:
     route = respx.post("http://localhost:11434/api/chat").mock(
-        return_value=httpx.Response(
-            200, json={"message": {"role": "assistant", "content": "ok"}}
-        )
+        return_value=httpx.Response(200, json={"message": {"role": "assistant", "content": "ok"}})
     )
     async with httpx.AsyncClient() as client:
         await OllamaProvider(client).chat(

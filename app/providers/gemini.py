@@ -105,12 +105,14 @@ class GeminiProvider(Provider):
             if message.role == Role.TOOL:
                 call_id = message.tool_call_id or ""
                 name = call_names.get(call_id, message.name or "unknown")
-                parts = [{
-                    "functionResponse": {
-                        "name": name,
-                        "response": {"result": message.text()},
+                parts = [
+                    {
+                        "functionResponse": {
+                            "name": name,
+                            "response": {"result": message.text()},
+                        }
                     }
-                }]
+                ]
                 role = "user"
             else:
                 role = "model" if message.role == Role.ASSISTANT else "user"
@@ -189,9 +191,7 @@ class GeminiProvider(Provider):
     def _finish_reason(reason: Any) -> FinishReason:
         if reason == "MAX_TOKENS":
             return FinishReason.LENGTH
-        if reason in {
-            "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "RECITATION"
-        }:
+        if reason in {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "RECITATION"}:
             return FinishReason.CONTENT_FILTER
         return FinishReason.STOP
 
@@ -209,12 +209,15 @@ class GeminiProvider(Provider):
                 text.append(part["text"])
             function_call = part.get("functionCall")
             if isinstance(function_call, dict):
-                tool_calls.append(ToolCall(
-                    name=function_call.get("name", ""),
-                    arguments=json.dumps(function_call.get("args", {})),
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        name=function_call.get("name", ""),
+                        arguments=json.dumps(function_call.get("args", {})),
+                    )
+                )
         finish_reason = (
-            FinishReason.TOOL_CALLS if tool_calls
+            FinishReason.TOOL_CALLS
+            if tool_calls
             else cls._finish_reason(candidate.get("finishReason"))
         )
         message = Message(role=Role.ASSISTANT, content="".join(text), tool_calls=tool_calls)
@@ -265,9 +268,7 @@ class GeminiProvider(Provider):
             candidates = fragment.get("candidates", [])
             candidate = candidates[0] if candidates else {}
             parts = candidate.get("content", {}).get("parts", [])
-            text = "".join(
-                part["text"] for part in parts if isinstance(part.get("text"), str)
-            )
+            text = "".join(part["text"] for part in parts if isinstance(part.get("text"), str))
             deltas: list[ToolCallDelta] = []
             for part in parts:
                 function_call = part.get("functionCall")
@@ -278,12 +279,14 @@ class GeminiProvider(Provider):
                 if name not in tool_indices:
                     tool_indices[name] = len(tool_indices)
                     tool_ids[name] = f"call_{uuid.uuid4().hex[:24]}"
-                deltas.append(ToolCallDelta(
-                    index=tool_indices[name],
-                    id=tool_ids[name],
-                    name=name,
-                    arguments=json.dumps(function_call.get("args", {})),
-                ))
+                deltas.append(
+                    ToolCallDelta(
+                        index=tool_indices[name],
+                        id=tool_ids[name],
+                        name=name,
+                        arguments=json.dumps(function_call.get("args", {})),
+                    )
+                )
             reason = candidate.get("finishReason")
             if reason is not None:
                 latest_finish = (
@@ -305,7 +308,9 @@ class GeminiProvider(Provider):
 
         try:
             async with self._client.stream(
-                "POST", url, headers=self._headers(deployment),
+                "POST",
+                url,
+                headers=self._headers(deployment),
                 json=self._payload(request, deployment),
             ) as response:
                 await self._raise_for_stream_status(response)
@@ -325,15 +330,15 @@ class GeminiProvider(Provider):
                         yield chunk
             if latest_usage is not None or latest_finish is not None:
                 yield StreamChunk(
-                    model=request.model, usage=latest_usage, finish_reason=latest_finish,
+                    model=request.model,
+                    usage=latest_usage,
+                    finish_reason=latest_finish,
                     provider=self.name,
                 )
         except Exception as exc:
             raise self.map_error(exc, deployment) from exc
 
-    async def embed(
-        self, request: EmbeddingRequest, deployment: Deployment
-    ) -> EmbeddingResponse:
+    async def embed(self, request: EmbeddingRequest, deployment: Deployment) -> EmbeddingResponse:
         async def embed_one(text: str) -> dict[str, Any]:
             body: dict[str, Any] = {
                 "model": f"models/{deployment.provider_model}",
@@ -343,7 +348,8 @@ class GeminiProvider(Provider):
                 body["outputDimensionality"] = request.dimensions
             response = await self._client.post(
                 f"{self._base_url(deployment)}/models/{deployment.provider_model}:embedContent",
-                headers=self._headers(deployment), json=body,
+                headers=self._headers(deployment),
+                json=body,
             )
             response.raise_for_status()
             payload: dict[str, Any] = response.json()

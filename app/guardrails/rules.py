@@ -66,9 +66,7 @@ class DenylistRule(Rule):
                 if phrases:
                     escaped = escaped.replace(r"\ ", r"\s+")
                 alternatives.append(escaped)
-            self.pattern = re.compile(
-                rf"(?<!\w)(?:{'|'.join(alternatives)})(?!\w)", re.IGNORECASE
-            )
+            self.pattern = re.compile(rf"(?<!\w)(?:{'|'.join(alternatives)})(?!\w)", re.IGNORECASE)
         self.replacement = replacement
 
     def evaluate(self, text: str) -> RuleMatch | None:

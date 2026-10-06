@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
+from app.core.errors import PermissionDeniedError
 from app.core.pipeline import Executor, RequestContext, _replay_as_stream
 from app.core.schemas import ChatResponse, StreamChunk
 from app.tools.executor import ToolExecutor, run_tool_loop
+from app.tools.governance import McpScope, ToolCallContext
 
 if TYPE_CHECKING:
     from app.mcp.registry import McpRegistry
@@ -33,9 +35,17 @@ class AgenticExecutor:
             return await self._inner.execute(ctx)
 
         registry: McpRegistry = ctx.state.components["mcp_registry"]
+        scope = McpScope.for_key(ctx.virtual_key)
+        for server_id in options.servers or []:
+            if not scope.permits_server(server_id, registry.server_name(server_id)):
+                raise PermissionDeniedError(f"This API key may not use MCP server {server_id!r}")
         mcp_tools = await registry.tools_for(options.servers)
         client_names = {tool.function.name for tool in ctx.request.tools}
-        offered = [tool for tool in mcp_tools if tool.function.name not in client_names]
+        offered = [
+            tool
+            for tool in mcp_tools
+            if tool.function.name not in client_names and scope.allows(registry, tool.function.name)
+        ]
         streaming = ctx.request.stream
         # Hops are unary even for a streamed request; the answer is replayed.
         ctx.request = ctx.request.model_copy(
@@ -45,7 +55,7 @@ class AgenticExecutor:
             return await run_tool_loop(
                 ctx,
                 self._inner.execute,
-                ToolExecutor(registry),
+                ToolExecutor(registry, scope=scope, call_context=ToolCallContext.for_request(ctx)),
                 max_iterations=options.max_iterations,
                 mcp_names={tool.function.name for tool in offered},
             )

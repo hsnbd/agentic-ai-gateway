@@ -110,7 +110,7 @@ def _build_guardrails(state: GatewayState) -> tuple[Stage | None, PostStage | No
         logger.warning("stage_unavailable", stage="guardrails", reason=str(exc))
         return None, None
 
-    registry.set_judge(_judge_client(state))
+    registry.set_judge(direct_model_caller(state))
     state.components["guardrails"] = registry
     return InputGuardrailStage(registry), OutputGuardrailStage(
         registry,
@@ -118,10 +118,11 @@ def _build_guardrails(state: GatewayState) -> tuple[Stage | None, PostStage | No
     )
 
 
-def _judge_client(state: GatewayState) -> Any:
-    """Call a judge model directly through the provider registry.
+def direct_model_caller(state: GatewayState) -> Any:
+    """Call a model directly through the provider registry, for the gateway's own
+    use: guardrail judges and RAG reranking.
 
-    Deliberately not through the pipeline: a judge call must not be guarded by
+    Deliberately not through the pipeline: such a call must not be guarded by
     the rule that is waiting on it, cached, or billed to the caller's key.
     Deployments are tried in priority order.
     """

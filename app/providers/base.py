@@ -122,16 +122,12 @@ class Provider(abc.ABC):
         """Perform a unary chat completion."""
 
     @abc.abstractmethod
-    def stream(
-        self, request: ChatRequest, deployment: Deployment
-    ) -> AsyncIterator[StreamChunk]:
+    def stream(self, request: ChatRequest, deployment: Deployment) -> AsyncIterator[StreamChunk]:
         """Perform a streaming chat completion."""
 
     # -- Optional surface -------------------------------------------------
 
-    async def embed(
-        self, request: EmbeddingRequest, deployment: Deployment
-    ) -> EmbeddingResponse:
+    async def embed(self, request: EmbeddingRequest, deployment: Deployment) -> EmbeddingResponse:
         raise ProviderError(
             ErrorCode.INVALID_REQUEST,
             f"Provider {self.name!r} does not support embeddings",
@@ -160,8 +156,14 @@ class Provider(abc.ABC):
     def _merge_params(self, request: ChatRequest, deployment: Deployment) -> dict[str, Any]:
         """Apply deployment defaults beneath explicit request values."""
         params = dict(deployment.default_params)
-        for key in ("temperature", "top_p", "max_tokens", "seed",
-                    "presence_penalty", "frequency_penalty"):
+        for key in (
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "seed",
+            "presence_penalty",
+            "frequency_penalty",
+        ):
             value = getattr(request, key, None)
             if value is not None:
                 params[key] = value
@@ -235,11 +237,7 @@ class Provider(abc.ABC):
         }.get(status)
 
         if code is None:
-            code = (
-                ErrorCode.PROVIDER_UNAVAILABLE
-                if status >= 500
-                else ErrorCode.PROVIDER_ERROR
-            )
+            code = ErrorCode.PROVIDER_UNAVAILABLE if status >= 500 else ErrorCode.PROVIDER_ERROR
 
         # Context-length failures arrive as generic 400s; detect them by text
         # so that routing can fail over to a larger-context model.

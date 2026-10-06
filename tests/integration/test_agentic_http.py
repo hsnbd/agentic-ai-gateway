@@ -58,7 +58,9 @@ class TestRagInChat:
         collection_id = _collection(client, auth_headers, PARIS)
         response = client.post(
             "/v1/chat/completions",
-            json=chat_body("What is the capital of France?", aigw={"rag": {"collection_id": collection_id}}),
+            json=chat_body(
+                "What is the capital of France?", aigw={"rag": {"collection_id": collection_id}}
+            ),
             headers=auth_headers,
         )
         assert response.status_code == 200, response.text
@@ -75,7 +77,9 @@ class TestRagInChat:
         collection_id = _collection(client, auth_headers, PARIS)
         response = client.post(
             "/v1/chat/completions",
-            json=chat_body("Capital of France?", rag={"collection_id": collection_id, "mode": "user"}),
+            json=chat_body(
+                "Capital of France?", rag={"collection_id": collection_id, "mode": "user"}
+            ),
             headers=auth_headers,
         )
         assert response.status_code == 200, response.text
@@ -164,7 +168,9 @@ class TestRagCache:
         self, client: TestClient, auth_headers: dict[str, str], primary: FakeProvider
     ) -> None:
         first = _collection(client, auth_headers, PARIS)
-        second_resp = client.post("/v1/rag/collections", json={"name": "other"}, headers=auth_headers)
+        second_resp = client.post(
+            "/v1/rag/collections", json={"name": "other"}, headers=auth_headers
+        )
         second = second_resp.json()["id"]
         client.post(
             f"/v1/rag/collections/{second}/documents",
@@ -175,7 +181,9 @@ class TestRagCache:
         def ask(collection_id: str) -> Any:
             return client.post(
                 "/v1/chat/completions",
-                json=chat_body("capital city", temperature=0, aigw={"rag": {"collection_id": collection_id}}),
+                json=chat_body(
+                    "capital city", temperature=0, aigw={"rag": {"collection_id": collection_id}}
+                ),
                 headers=auth_headers,
             )
 

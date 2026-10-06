@@ -329,7 +329,7 @@ class TestConsoleMount:
     def test_console_index_and_spa_fallback(self, client: TestClient) -> None:
         index = client.get("/ui/")
         assert index.status_code == 200
-        assert "<div id=\"root\">" in index.text
+        assert '<div id="root">' in index.text
 
         deep_link = client.get("/ui/logs")
         assert deep_link.status_code == 200

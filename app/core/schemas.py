@@ -121,7 +121,12 @@ class RagOptions(BaseModel):
     diversity: float = Field(default=0.0, ge=0.0, le=1.0)
     filters: dict[str, str] | None = None
     max_context_tokens: int = Field(default=4000, gt=0)
+    #: Where retrieved context goes: the system prompt or the user message.
     mode: Literal["system", "user"] = "system"
+    #: How chunks are found: embedding similarity, or that plus keyword (BM25) fusion.
+    search_mode: Literal["vector", "hybrid"] = "vector"
+    #: Chat model that reorders the candidates by relevance; None skips reranking.
+    rerank_model: str | None = None
 
 
 class McpOptions(BaseModel):

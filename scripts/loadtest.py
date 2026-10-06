@@ -118,9 +118,7 @@ class LoadTest:
 
         latency = time.perf_counter() - started
         if response.status_code != 200:
-            return Result(
-                False, latency, response.status_code, error=response.text[:200]
-            )
+            return Result(False, latency, response.status_code, error=response.text[:200])
         return Result(
             True,
             latency,
@@ -189,8 +187,7 @@ class LoadTest:
         ) as client:
             reporter = asyncio.create_task(self._reporter())
             workers = [
-                asyncio.create_task(self._worker(client))
-                for _ in range(self.args.concurrency)
+                asyncio.create_task(self._worker(client)) for _ in range(self.args.concurrency)
             ]
             await asyncio.sleep(self.args.duration)
             self._stop = True
@@ -260,8 +257,7 @@ class LoadTest:
         failures = []
         if success_rate < self.args.min_success_rate:
             failures.append(
-                f"success rate {success_rate:.1%} below threshold "
-                f"{self.args.min_success_rate:.1%}"
+                f"success rate {success_rate:.1%} below threshold {self.args.min_success_rate:.1%}"
             )
         p95_ms = _percentile(latencies, 95) * 1000
         if self.args.max_p95_ms and p95_ms > self.args.max_p95_ms:

@@ -181,7 +181,11 @@ async def test_tools_tool_choice_and_assistant_tool_calls_are_translated(
                 tool_calls=[ToolCall(id="call-1", name="lookup", arguments='{"key": 1}')],
             )
         ],
-        tools=[ToolDef(function={"name": "lookup", "description": "Find", "parameters": {"type": "object"}})],
+        tools=[
+            ToolDef(
+                function={"name": "lookup", "description": "Find", "parameters": {"type": "object"}}
+            )
+        ],
         tool_choice=ToolChoice(mode="function", function_name="lookup"),
     )
 
@@ -238,16 +242,41 @@ async def test_stream_translates_text_tool_json_deltas_and_final_usage(
     provider: AnthropicProvider, deployment: Deployment
 ) -> None:
     events = [
-        ('message_start', {"message": {"id": "msg-stream", "usage": {"input_tokens": 8, "cache_read_input_tokens": 2}}}),
-        ('content_block_start', {"index": 0, "content_block": {"type": "text", "text": ""}}),
-        ('content_block_delta', {"index": 0, "delta": {"type": "text_delta", "text": "hello"}}),
-        ('content_block_stop', {"index": 0}),
-        ('content_block_start', {"index": 1, "content_block": {"type": "tool_use", "id": "tool-2", "name": "lookup", "input": {}}}),
-        ('content_block_delta', {"index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"q":'}}),
-        ('content_block_delta', {"index": 1, "delta": {"type": "input_json_delta", "partial_json": '"x"}'}}),
-        ('content_block_stop', {"index": 1}),
-        ('message_delta', {"delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 5}}),
-        ('message_stop', {}),
+        (
+            "message_start",
+            {
+                "message": {
+                    "id": "msg-stream",
+                    "usage": {"input_tokens": 8, "cache_read_input_tokens": 2},
+                }
+            },
+        ),
+        ("content_block_start", {"index": 0, "content_block": {"type": "text", "text": ""}}),
+        ("content_block_delta", {"index": 0, "delta": {"type": "text_delta", "text": "hello"}}),
+        ("content_block_stop", {"index": 0}),
+        (
+            "content_block_start",
+            {
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "tool-2",
+                    "name": "lookup",
+                    "input": {},
+                },
+            },
+        ),
+        (
+            "content_block_delta",
+            {"index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"q":'}},
+        ),
+        (
+            "content_block_delta",
+            {"index": 1, "delta": {"type": "input_json_delta", "partial_json": '"x"}'}},
+        ),
+        ("content_block_stop", {"index": 1}),
+        ("message_delta", {"delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 5}}),
+        ("message_stop", {}),
     ]
     sse = "".join(f"event: {name}\ndata: {json.dumps(data)}\n\n" for name, data in events)
     respx.post("https://api.anthropic.com/v1/messages").mock(

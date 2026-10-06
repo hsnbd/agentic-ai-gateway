@@ -69,6 +69,7 @@ from app.api.schemas_admin import (
     TeamUsageResponse,
     TimeSeriesPoint,
     TimeSeriesResponse,
+    ToolCallLogResponse,
     UsageResponse,
     UsageRow,
     VirtualKeyResponse,
@@ -91,6 +92,7 @@ from app.db.models import (
     GuardrailViolation,
     RequestLog,
     Team,
+    ToolCallLog,
     UsageRollup,
     VirtualKey,
 )
@@ -148,9 +150,7 @@ async def _latency_percentile(
         RequestLog.created_at < end,
         RequestLog.latency_ms.is_not(None),
     ]
-    count = await session.scalar(
-        select(func.count()).select_from(RequestLog).where(*filters)
-    )
+    count = await session.scalar(select(func.count()).select_from(RequestLog).where(*filters))
     if not count:
         return 0.0
     offset = max(0, math.ceil(percentile * count) - 1)
@@ -391,9 +391,7 @@ async def dashboard_summary(
         rollups = list(
             (
                 await session.scalars(
-                    select(UsageRollup).where(
-                        UsageRollup.bucket >= start, UsageRollup.bucket < end
-                    )
+                    select(UsageRollup).where(UsageRollup.bucket >= start, UsageRollup.bucket < end)
                 )
             ).all()
         )
@@ -478,6 +476,7 @@ async def dashboard_summary(
         previous_error_count=int(previous["errors"]),
         previous_fallback_count=int(previous["fallbacks"]),
     )
+
 
 @router.get("/dashboard/timeseries", response_model=TimeSeriesResponse)
 async def dashboard_timeseries(
@@ -594,6 +593,8 @@ async def create_key(
             blocked_models=body.blocked_models,
             guardrail_policy=body.guardrail_policy,
             allowed_routes=body.allowed_routes,
+            allowed_mcp_servers=body.allowed_mcp_servers,
+            allowed_tools=body.allowed_tools,
             is_active=body.enabled,
             expires_at=body.expires_at,
             metadata_=body.metadata,
@@ -1530,6 +1531,50 @@ async def guardrail_violations(
     return Page(items=items, total=total, limit=page.limit, offset=page.offset)
 
 
+@router.get("/tool-calls", response_model=Page[ToolCallLogResponse])
+async def tool_calls(
+    state: Annotated[GatewayState, Depends(get_gateway_state)],
+    page: Pagination,
+    _: CurrentAdmin,
+    key_id: str | None = None,
+    team_id: str | None = None,
+    server_id: str | None = None,
+    tool: str | None = None,
+    status: str | None = None,
+    request_id: str | None = None,
+) -> Page[ToolCallLogResponse]:
+    """The MCP tool-call audit log, newest first."""
+    filters = [
+        column == value
+        for column, value in (
+            (ToolCallLog.virtual_key_id, key_id),
+            (ToolCallLog.team_id, team_id),
+            (ToolCallLog.server_id, server_id),
+            (ToolCallLog.tool, tool),
+            (ToolCallLog.status, status),
+            (ToolCallLog.request_id, request_id),
+        )
+        if value
+    ]
+    async with state.db.session() as session:
+        total = int(
+            await session.scalar(select(func.count()).select_from(ToolCallLog).where(*filters)) or 0
+        )
+        rows = list(
+            (
+                await session.scalars(
+                    select(ToolCallLog)
+                    .where(*filters)
+                    .order_by(ToolCallLog.created_at.desc())
+                    .offset(page.offset)
+                    .limit(page.limit)
+                )
+            ).all()
+        )
+    items = [ToolCallLogResponse.model_validate(row, from_attributes=True) for row in rows]
+    return Page(items=items, total=total, limit=page.limit, offset=page.offset)
+
+
 @router.get("/guardrails/policies", response_model=Page[GuardrailPolicyResponse])
 async def guardrail_policies(
     state: Annotated[GatewayState, Depends(get_gateway_state)],
@@ -1540,9 +1585,9 @@ async def guardrail_policies(
 
     # With guardrails disabled nothing is loaded at startup; read the file so
     # operators can still inspect the policies they would get.
-    registry: GuardrailRegistry = state.components.get(
-        "guardrails"
-    ) or GuardrailRegistry.load(state.settings.guardrails_config_path)
+    registry: GuardrailRegistry = state.components.get("guardrails") or GuardrailRegistry.load(
+        state.settings.guardrails_config_path
+    )
     items = []
     for name in sorted(registry.list_policies()):
         policy = registry.get_policy(name)
@@ -1573,9 +1618,7 @@ async def cache_stats(
     index_size_bytes: int | None = None
     if available and state.redis is not None:
         try:
-            raw_info = await state.redis.execute_command(
-                "FT.INFO", state.settings.cache_index_name
-            )
+            raw_info = await state.redis.execute_command("FT.INFO", state.settings.cache_index_name)
             info: dict[str, Any] = {}
             if isinstance(raw_info, (list, tuple)):
                 for index in range(0, len(raw_info) - 1, 2):
@@ -1662,9 +1705,7 @@ async def cache_entries(
                 model=response_model,
                 namespace=fields.get("namespace"),
                 hit_count=(
-                    int(fields["hit_count"])
-                    if fields.get("hit_count", "").isdigit()
-                    else None
+                    int(fields["hit_count"]) if fields.get("hit_count", "").isdigit() else None
                 ),
                 age_seconds=max(now - created_at, 0.0) if created_at is not None else None,
                 ttl_remaining_seconds=int(ttl_value) if ttl_value >= 0 else None,
@@ -1710,6 +1751,7 @@ async def cache_invalidate(
     if keys:
         removed += int(await state.redis.delete(*keys))
     return CacheInvalidateResponse(invalidated=removed)
+
 
 @router.get("/system/info", response_model=SystemInfoResponse)
 async def system_info(

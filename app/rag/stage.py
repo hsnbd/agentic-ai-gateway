@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.errors import ErrorCode, GatewayError, InvalidRequestError, NotFoundError
 from app.core.schemas import ChatRequest, RagOptions
+from app.rag.access import UNRESTRICTED, RagAccess
 from app.rag.retrieve import augment_request, build_context
 
 if TYPE_CHECKING:
@@ -19,7 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 async def retrieve_and_augment(
-    service: RagService, request: ChatRequest, options: RagOptions
+    service: RagService,
+    request: ChatRequest,
+    options: RagOptions,
+    access: RagAccess = UNRESTRICTED,
 ) -> tuple[ChatRequest, list[dict[str, Any]]]:
     """Search the collection and return the augmented request plus its sources.
 
@@ -38,6 +42,9 @@ async def retrieve_and_augment(
             min_score=options.min_score,
             diversity=options.diversity,
             filters=options.filters,
+            search_mode=options.search_mode,
+            rerank_model=options.rerank_model,
+            access=access,
         )
     except (NotFoundError, InvalidRequestError):
         raise
@@ -66,7 +73,9 @@ class RagStage:
             return None
         service: RagService = ctx.state.components["rag_service"]
         started = time.perf_counter()
-        ctx.request, ctx.rag_sources = await retrieve_and_augment(service, ctx.request, options)
+        ctx.request, ctx.rag_sources = await retrieve_and_augment(
+            service, ctx.request, options, RagAccess.for_context(ctx)
+        )
         ctx.__dict__.setdefault("_rag_details", {}).update(
             {
                 "collection_id": options.collection_id,

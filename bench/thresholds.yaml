@@ -1,0 +1,41 @@
+# Gates for scripts/bench_compare.py (and `make bench-check`).
+#
+# Latency and throughput use absolute bounds, not a comparison with the
+# baseline: CI runners and laptops differ too much for percentages to be fair.
+# Quality metrics are held to the baseline. Retrieval allows 0.05 (about two of
+# 48 questions) because the HNSW vector index is approximate and can reorder a
+# near-tie between runs.
+#
+# Rule keys: min, max, equals, max_drop, max_increase, max_drop_pct,
+# max_increase_pct, required (default true).
+
+metrics:
+  # ---- evaluate.py: the grading criteria
+  evaluate.success_rate_latency_cost.success_rate: {min: 0.99}
+  evaluate.success_rate_latency_cost.latency_p95_s: {max: 1.0}
+  evaluate.success_rate_latency_cost.cost_per_successful_request_usd: {max_increase_pct: 10}
+  evaluate.streaming_time_to_first_token.ttft_p95_s: {max: 0.5}
+  evaluate.cache_hit_ratio.hit_ratio: {min: 0.3}
+  evaluate.cache_hit_ratio.unrelated_prompt_hit: {equals: false}
+  evaluate.provider_failover.recovered_from_dead_primary: {equals: true}
+  evaluate.provider_failover.unknown_model_rejected: {equals: true}
+  evaluate.guardrail_effectiveness.benign_allowed: {equals: true}
+  evaluate.guardrail_effectiveness.pii_blocked_or_redacted: {equals: true}
+  evaluate.capability_surface.tool_calling_request_accepted: {equals: true}
+  evaluate.agentic_tool_calls.tool_loop_success_rate: {min: 1.0}
+  evaluate.agentic_tool_calls.max_iterations_rate: {max: 0.0}
+
+  # ---- loadtest.py: sustained load
+  loadtest.success_rate: {min: 0.99}
+  loadtest.latency_p95_ms: {max: 500}
+  loadtest.throughput_rps: {min: 50}
+  loadtest.latency_drift_ms: {max: 50}
+
+  # ---- agent_compat.py: official SDKs
+  agent_compat.pass_rate: {min: 1.0}
+
+  # ---- rag_eval.py: retrieval quality
+  rag_eval.vector.recall_at_5: {max_drop: 0.05, min: 0.8}
+  rag_eval.vector.mrr: {max_drop: 0.05}
+  rag_eval.hybrid.recall_at_5: {max_drop: 0.05, min: 0.9}
+  rag_eval.hybrid.mrr: {max_drop: 0.05}

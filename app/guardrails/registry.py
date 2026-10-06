@@ -33,6 +33,8 @@ class Policy:
     description: str = ""
     input_rules: list[Rule] = field(default_factory=list)
     output_rules: list[Rule] = field(default_factory=list)
+    #: Also screen MCP tool arguments (input rules) and results (output rules).
+    apply_to_tools: bool = False
 
     def rules_for(self, phase: Phase) -> list[Rule]:
         return self.input_rules if phase == Phase.INPUT else self.output_rules
@@ -65,6 +67,7 @@ class GuardrailRegistry:
                 description=str(value.get("description", "")),
                 input_rules=_build_rules(value.get("input") or [], name, "input"),
                 output_rules=_build_rules(value.get("output") or [], name, "output"),
+                apply_to_tools=bool(value.get("apply_to_tools", False)),
             )
         return cls(policies)
 
@@ -111,9 +114,7 @@ class GuardrailRegistry:
         result_text = text
         if not blocked:
             matched_names = {match.rule_name for match in matches}
-            result_text = _redact_once(
-                text, [r for r in rules if r.name in matched_names]
-            )
+            result_text = _redact_once(text, [r for r in rules if r.name in matched_names])
         return GuardrailResult(
             policy=policy.name,
             phase=phase,
@@ -153,9 +154,7 @@ def _build_rules(entries: Any, policy: str, phase: str) -> list[Rule]:
         if not isinstance(name, str) or not name:
             raise ConfigurationError(f"Rule {index} in policy {policy!r} requires a name")
         if not isinstance(rule_type, str) or rule_type not in _SUPPORTED_RULE_TYPES:
-            raise ConfigurationError(
-                f"Unknown guardrail rule type {rule_type!r} for rule {name!r}"
-            )
+            raise ConfigurationError(f"Unknown guardrail rule type {rule_type!r} for rule {name!r}")
         try:
             action = Action(entry.get("action", "flag"))
             severity = Severity(entry.get("severity", "medium"))

@@ -297,6 +297,9 @@ class _McpRegistry:
     async def tools_for(self, server_ids: Any = None) -> list[ToolDef]:
         return self.tools
 
+    def server_name(self, server_id: str) -> str:
+        return server_id
+
     def resolve(self, name: str) -> tuple[str, str]:
         return "srv", name
 

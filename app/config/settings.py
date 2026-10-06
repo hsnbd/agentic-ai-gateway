@@ -93,9 +93,22 @@ class Settings(BaseSettings):
     rag_chunk_size: int = 1000
     rag_chunk_overlap: int = 150
     rag_default_top_k: int = 5
+    #: Documents larger than this (after text extraction) are refused with 413.
+    rag_max_document_bytes: int = 10_000_000
+    #: Documents at least this large are ingested in the background (202, poll status).
+    rag_background_ingest_bytes: int = 200_000
+    #: Background ingestions that may embed at once.
+    rag_ingest_concurrency: int = 2
 
     # --- MCP ---
+    #: Encrypts stored MCP server env values and headers (app/core/secrets.py).
+    #: Comma-separated; the first key encrypts, all decrypt.
+    secrets_encryption_key: SecretStr | None = None
     mcp_timeout_seconds: float = 10.0
+    #: Re-check every MCP server this often (seconds); 0 disables background checks.
+    mcp_health_interval_seconds: float = 60.0
+    #: Tool results longer than this are truncated before the model sees them.
+    mcp_max_result_chars: int = 20000
     mcp_tool_cache_ttl_seconds: float = 300.0
 
     # --- Observability ---

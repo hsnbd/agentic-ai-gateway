@@ -3,6 +3,8 @@
 policies:
   default:
     description: Balanced protection for common prompt injection, PII, and oversized input.
+    # Also screen MCP tool arguments (input rules) and results (output rules).
+    apply_to_tools: true
     input:
       - name: block-prompt-injection
         type: regex
@@ -32,6 +34,8 @@ policies:
 
   strict:
     description: Strict limits and additional sensitive-data checks for untrusted clients.
+    # Also screen MCP tool arguments (input rules) and results (output rules).
+    apply_to_tools: true
     input:
       - name: block-prompt-injection
         type: regex

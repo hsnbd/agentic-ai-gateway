@@ -93,6 +93,32 @@ Response
 
 ---
 
+## Enterprise RAG
+
+| Capability | What it gives you |
+|---|---|
+| **Tenancy** | Collections belong to a team or key; other tenants get 404; shared collections are read-only to applications |
+| **Hybrid search** | Keyword (BM25) and vector results fused by rank: recall@5 **0.85 → 0.98**, MRR **0.71 → 0.90** on the benchmark |
+| **Reranking** | Optional: a chat model reorders candidates; any failure keeps the original order |
+| **Metadata filters** | Collections declare fields such as `department`; searches filter on them exactly |
+| **Real documents** | `.txt`, `.md`, `.html`, `.pdf`, `.docx`; large files ingest in the background; re-uploads replace by source |
+| **Recoverable** | A lost index rebuilds itself; lost vectors are rebuilt from Postgres with one call |
+
+---
+
+## Governed MCP tools
+
+| Capability | What it gives you |
+|---|---|
+| **Scoped access** | Per-key allowlists of servers and tools (wildcards) on listing, agent loops, and direct calls |
+| **Guardrails on tools** | Arguments screened before the server sees them; results screened before the model does |
+| **Audit log** | Every call: who, which tool, outcome, duration, guardrail; arguments stored only as a hash |
+| **Encrypted credentials** | Server tokens and headers encrypted at rest, with key rotation; never returned by the API |
+| **Resilience** | Per-server circuit breaker, session recovery, stdio restart, background health checks |
+| **Observability** | Prometheus metrics for tool calls, latency, and breaker state |
+
+---
+
 ## Evaluation method
 
 Every figure comes from `scripts/evaluate.py` and `scripts/loadtest.py` driving a **running gateway over HTTP**: the real app, real Postgres, and real Redis Stack.
@@ -147,11 +173,12 @@ Four automated suites, two of them enforced as **coverage gates in CI**:
 
 | Suite | Scope | Result |
 |---|---|---|
-| **Unit** | Every module in isolation | 746 tests |
-| **Integration** | Real app on real Postgres + Redis Stack | 208 tests |
-| **Backend total** | Unit + integration combined | **954 passing · 100% line and branch coverage** (gate) |
+| **Unit** | Every module in isolation | 822 tests |
+| **Integration** | Real app on real Postgres + Redis Stack | 251 tests |
+| **Backend total** | Unit + integration combined | **1,073 passing · 100% line and branch coverage** (gate) |
 | **Console unit** | API client, streaming parser, auth, components | **68 passing · 100% coverage** of logic (gate) |
-| **End-to-end** | Cucumber: official SDKs + real browser against the dockerised stack | **121 scenarios passing** |
+| **End-to-end** | Cucumber: official SDKs + real browser against the dockerised stack | **129 scenarios passing** |
+| **Benchmarks** | Grading criteria, load, SDK compatibility, retrieval quality vs a committed baseline | **No regressions** (CI gate) |
 
 Plus lint (ruff), type checking (mypy, tsc), a Helm chart check, and a Docker build on every push.
 
@@ -167,14 +194,16 @@ Testing against the **assembled system** found defects that mocked tests missed.
 - **Streamed provider errors crashed** instead of being reported, which also blocked context-length fallback
 - **Anthropic streaming** was broken for the official TypeScript SDK
 - **Console:** deep links 404'd; the first admin was never created on a fresh install; the playground never sent the message just typed
+- **Credentials:** MCP server header values (often API tokens) were returned in clear by the API
+- **Stalls:** the first token count downloaded a tokenizer with no timeout, hanging requests on a slow network
 
-**Lesson:** mocks encode assumptions, and the assumptions were what was wrong. 26 defects were found and fixed through verification.
+**Lesson:** mocks encode assumptions, and the assumptions were what was wrong. 28 defects were found and fixed through verification.
 
 ---
 
 ## Feature completeness
 
-**128 features complete and tested** · 5 partial · 5 proposed
+**149 features complete and tested** · 4 partial · 5 proposed
 
 Complete: every data-plane endpoint, all four provider adapters (now tested end to end), routing, resilience, cache, guardrails, cost control, RAG, MCP, the agent loop, observability, and all console pages.
 
@@ -184,7 +213,7 @@ Complete: every data-plane endpoint, all four provider adapters (now tested end 
 - Regenerating keys and editing limits from the console (API is tested)
 - Docker Compose, Grafana, and Prometheus setup (checked manually)
 
-**Proposed:** guardrails on tool traffic · streaming intermediate agent steps · PDF/DOCX ingestion · load test in CI · a live-provider test suite
+**Proposed:** streaming intermediate agent steps · more console views for RAG indexes · scheduled load tests against real providers · OCR for scanned PDFs · a live-provider test suite
 
 ---
 
@@ -193,7 +222,7 @@ Complete: every data-plane endpoint, all four provider adapters (now tested end 
 - **Paraphrase caching is not demonstrated.** The fake upstream's embeddings are hash-based, so the evaluation proves exact-repeat hits and correct rejection, not semantic matching. That needs a real embedding model
 - **Latency excludes real provider time** by design: it isolates the gateway's cost
 - **Provider adapters are tested against faithful fakes**, not live vendor APIs; a vendor changing its format would not be caught
-- **Direct MCP tool calls** (`/v1/mcp/tools/call`) are not yet logged, costed, or guardrailed
+- **Retrieval scores come from fake embeddings**: hybrid's gain (recall@5 0.85 → 0.98) is real for keyword-heavy questions, but semantic quality needs a real embedding model
 - **Costs are estimates** from price tables, not invoice-exact
 
 ---
@@ -216,11 +245,12 @@ Setup, configuration, and operation are covered step by step in the **User Manua
 - **Reliable:** 100% success with a dead primary; 0 failures across 4,668 requests under load
 - **Cheap to run through:** ~15 ms median overhead; every request's cost is known
 - **Safe and controlled:** budgets, rate limits, allowlists, and guardrails on streams
-- **Proven by tests:** 100% backend coverage, 954 + 68 unit/integration tests, 121 end-to-end scenarios
+- **Enterprise RAG and MCP:** tenancy, hybrid search, recoverable indexes, scoped and audited tools, encrypted credentials
+- **Proven by tests:** 100% backend coverage, 1,073 + 68 unit/integration tests, 129 end-to-end scenarios, benchmarks gated in CI
 
 ### Next steps
 
-Live-provider test suite · guardrails on tool traffic · PDF/DOCX ingestion · load test gate in CI
+Live-provider test suite · streaming agent steps · scheduled real-provider benchmarks · OCR ingestion
 
 ---
 

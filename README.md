@@ -118,7 +118,9 @@ Coverage is a gate, not a report:
   SSE parsing, the playground inspector, formatters, auth, and shared
   components (`ui/vitest.config.ts`). Pages are covered by the `@ui` Cucumber
   scenarios instead.
-- `make check` runs lint, types, and both gates.
+- `make check` runs lint, formatting, types, and both gates.
+
+Benchmarks are gated too. `make bench` runs every benchmark against the e2e stack (the grading criteria, sustained load, official-SDK compatibility, and RAG retrieval quality) and saves the JSON under `bench/results/`. `make bench-check` compares a run with the committed `bench/baseline/` using the tolerances in `bench/thresholds.yaml`, and fails on a regression; CI runs it on every push. Re-record the baseline with `make bench-baseline` after an intended change.
 
 `make test-integration` starts throwaway datastores from
 `tests/integration/docker-compose.test.yaml` (ports 55432 and 56379); point the

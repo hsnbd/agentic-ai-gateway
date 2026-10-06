@@ -7,6 +7,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { ConfirmDialog, EmptyState, ErrorState, JsonViewer, LoadingState, PageHeader } from '../components/Shared';
 import { LongText } from '../features/knowledge/LongText';
 import { McpServerForm } from '../features/knowledge/McpServerForm';
+import { ToolCallsPanel } from '../features/knowledge/ToolCallsPanel';
 
 interface SchemaProperty {
   type: string;
@@ -279,5 +280,6 @@ export default function McpServers() {
     {editTarget && <McpServerForm key={editTarget.id} server={editTarget} onClose={() => setEditTarget(null)} onSave={(payload) => { setCreateError(null); editMutation.mutate({ id: editTarget.id, payload }); }} pending={editMutation.isPending} serverError={createError} />}
     <ConfirmDialog open={Boolean(deleteTarget)} title="Delete MCP server?" description={`Remove “${deleteTarget?.name ?? ''}” from the gateway registry? Its connection and discovered tools will no longer be available.`} confirmLabel={deleteMutation.isPending ? 'Deleting…' : 'Delete server'} onClose={() => setDeleteTarget(null)} onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }} />
     {deleteMutation.isError && <Alert severity="error" sx={{ mt: 2 }}>{deleteMutation.error.message}</Alert>}
+    <ToolCallsPanel />
   </Box>;
 }

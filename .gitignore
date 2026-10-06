@@ -32,3 +32,10 @@ app/ui_static/*
 
 # Local SQLite scratch databases
 *.db
+
+# benchmark runs (bench/baseline is committed)
+bench/results/
+bench/.baseline-run/
+
+# tiktoken BPE cache used by the tests
+.cache/

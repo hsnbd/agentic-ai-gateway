@@ -12,7 +12,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - run: uv sync --locked --extra dev
-      - run: uv run ruff check app tests scripts/fake_mcp_server.py
+      - run: uv run ruff check app tests scripts
+      - run: uv run ruff format --check app tests scripts
       - run: uv run mypy app
       # Coverage is gated once, on unit + integration combined (coverage job).
       - run: uv run pytest tests/unit --cov --cov-report= --cov-fail-under=0
@@ -124,6 +125,30 @@ jobs:
           path: e2e/reports/
       - if: always()
         run: docker compose -f docker-compose.e2e.yaml down -v
+
+  bench:
+    # Benchmarks against the dockerised stack, gated by bench/thresholds.yaml
+    # and compared with the committed bench/baseline.
+    runs-on: ubuntu-latest
+    needs: [python, ui]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: uv sync --locked --extra dev
+      - run: docker compose -f e2e/docker-compose.e2e.yaml up -d --build --wait
+      - run: uv run python scripts/bench.py --out bench/results --baseline bench/baseline
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench/results/
+      - if: failure()
+        run: docker compose -f e2e/docker-compose.e2e.yaml logs --no-color gateway | tail -300
+      - if: always()
+        run: docker compose -f e2e/docker-compose.e2e.yaml down -v
 
   helm:
     runs-on: ubuntu-latest

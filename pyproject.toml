@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 
 dependencies = [
+    "cryptography>=43.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.9.0",
@@ -42,6 +43,12 @@ dev = [
     "types-pyyaml>=6.0.12",
     "anyio>=4.6.0",
     "aiosqlite>=0.20.0",
+    "aigateway[rag-docs]",
+]
+# PDF and Word ingestion for RAG; without it only text, Markdown, and HTML.
+rag-docs = [
+    "pypdf>=5.0",
+    "python-docx>=1.1",
 ]
 
 [project.scripts]

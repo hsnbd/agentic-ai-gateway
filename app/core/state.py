@@ -62,6 +62,13 @@ class GatewayState:
 
         self.components["rag_service"] = RagService(self)
         self.components["mcp_registry"] = McpRegistry(self.db, self.settings)
+        self.components["mcp_registry"].start_health_checks(
+            self.settings.mcp_health_interval_seconds
+        )
+        try:
+            await self.components["rag_service"].recover_interrupted()
+        except Exception:  # pragma: no cover - never block startup on this
+            logger.exception("could not recover interrupted RAG ingestions")
 
         from app.core.builder import build_pipeline
 
@@ -104,6 +111,9 @@ class GatewayState:
         return self.pipeline
 
     async def shutdown(self) -> None:
+        rag_service = self.components.get("rag_service")
+        if rag_service is not None:
+            await rag_service.close()
         registry = self.components.get("mcp_registry")
         if registry is not None:
             await registry.close()

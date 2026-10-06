@@ -195,9 +195,7 @@ class ConditionalStrategy(RoutingStrategy):
 
         if prompt_tokens >= self._long_context_threshold:
             large = [
-                d
-                for d in candidates
-                if d.capabilities.max_context_tokens >= prompt_tokens * 2
+                d for d in candidates if d.capabilities.max_context_tokens >= prompt_tokens * 2
             ]
             if large:
                 best = max(large, key=lambda d: d.capabilities.max_context_tokens)
