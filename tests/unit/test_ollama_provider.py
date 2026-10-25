@@ -269,7 +269,28 @@ async def test_stream_emits_tool_call_deltas(deployment: Deployment) -> None:
 
     assert chunks[0].tool_calls[0].name == "lookup"
     assert chunks[0].tool_calls[0].arguments == '{"q": "x"}'
+    assert chunks[0].tool_calls[0].id is not None
     assert chunks[-1].finish_reason == FinishReason.TOOL_CALLS
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_tool_calls_in_separate_stream_lines_get_their_own_index(
+    deployment: Deployment,
+) -> None:
+    def line(name: str) -> str:
+        call = {"function": {"name": name, "arguments": {}}}
+        return json.dumps({"message": {"role": "assistant", "tool_calls": [call]}}) + "\n"
+
+    body = line("first") + line("second") + json.dumps({"done": True}) + "\n"
+    respx.post("http://localhost:11434/api/chat").mock(return_value=httpx.Response(200, text=body))
+    request = ChatRequest(model="llama3.1", messages=[Message(role=Role.USER, content="go")])
+    async with httpx.AsyncClient() as client:
+        chunks = [chunk async for chunk in OllamaProvider(client).stream(request, deployment)]
+
+    calls = [call for chunk in chunks for call in chunk.tool_calls]
+    assert [(call.index, call.name) for call in calls] == [(0, "first"), (1, "second")]
+    assert len({call.id for call in calls}) == 2
 
 
 @pytest.mark.asyncio

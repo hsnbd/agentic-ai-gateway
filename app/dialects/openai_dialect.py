@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from pydantic import ValidationError
@@ -220,10 +221,23 @@ class OpenAIDialect(Dialect):
         if chunk.content is not None:
             delta["content"] = chunk.content
         if chunk.tool_calls:
+            # Clients require an id on each call's first delta; not every
+            # provider supplies one (Ollama never does).
+            seen: set[int] = state.setdefault("tool_indices", set())
+            ids = {
+                call.index: call.id
+                or (f"call_{uuid.uuid4().hex[:24]}" if call.index not in seen else None)
+                for call in chunk.tool_calls
+            }
+            seen.update(ids)
             delta["tool_calls"] = [
                 {
                     "index": call.index,
-                    **({"id": call.id, "type": "function"} if call.id is not None else {}),
+                    **(
+                        {"id": ids[call.index], "type": "function"}
+                        if ids[call.index] is not None
+                        else {}
+                    ),
                     **(
                         {
                             "function": {
@@ -242,7 +256,7 @@ class OpenAIDialect(Dialect):
                 for call in chunk.tool_calls
             ]
         common = {
-            "id": chunk.id,
+            "id": state.get("response_id", chunk.id),
             "object": "chat.completion.chunk",
             "created": chunk.created,
             "model": chunk.model,

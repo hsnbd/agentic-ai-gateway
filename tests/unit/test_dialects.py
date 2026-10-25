@@ -457,3 +457,23 @@ def test_invalid_payloads_and_anthropic_count_tokens() -> None:
     )
     assert counted.status_code == 200
     assert counted.json()["input_tokens"] > 0
+
+
+def test_openai_stream_keeps_one_id_and_gives_every_tool_call_an_id() -> None:
+    # OpenAI SDKs (e.g. the Vercel AI SDK behind OpenCode) reject a tool call
+    # without an id, and expect every chunk of one response to share its id.
+    dialect = OpenAIDialect()
+    state: dict[str, Any] = {}
+    frames = dialect.encode_stream_start("chatcmpl-1", "m", state)
+    frames += dialect.encode_chunk(
+        StreamChunk(tool_calls=[ToolCallDelta(index=0, name="bash", arguments="{")]), state
+    )
+    frames += dialect.encode_chunk(
+        StreamChunk(tool_calls=[ToolCallDelta(index=0, arguments="}")]), state
+    )
+    frames += dialect.encode_chunk(StreamChunk(finish_reason=FinishReason.TOOL_CALLS), state)
+    bodies = [json.loads(frame[6:]) for frame in frames]
+    assert {body["id"] for body in bodies} == {"chatcmpl-1"}
+    first, rest = (body["choices"][0]["delta"]["tool_calls"][0] for body in bodies[:2])
+    assert first["id"].startswith("call_") and first["type"] == "function"
+    assert "id" not in rest

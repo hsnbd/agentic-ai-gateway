@@ -216,8 +216,8 @@ class OllamaProvider(Provider):
         self, request: ChatRequest, deployment: Deployment
     ) -> AsyncIterator[StreamChunk]:
         url = f"{self._base_url(deployment)}/api/chat"
-        saw_tool_calls = False
         finished = False
+        tool_count = 0
         try:
             payload = self._request_payload(request, deployment)
             payload["stream"] = True
@@ -233,11 +233,17 @@ class OllamaProvider(Provider):
                         self._check_reply(data, deployment)
                     message = data.get("message", {})
                     calls = self._tool_calls(message)
-                    saw_tool_calls = saw_tool_calls or bool(calls)
+                    # Ollama sends each call whole, with no id, possibly one per line.
                     deltas = [
-                        ToolCallDelta(index=index, name=call.name, arguments=call.arguments)
-                        for index, call in enumerate(calls)
+                        ToolCallDelta(
+                            index=tool_count + offset,
+                            id=call.id,
+                            name=call.name,
+                            arguments=call.arguments,
+                        )
+                        for offset, call in enumerate(calls)
                     ]
+                    tool_count += len(calls)
                     content = message.get("content")
                     if content or deltas:
                         yield StreamChunk(
@@ -251,7 +257,7 @@ class OllamaProvider(Provider):
                         finished = True
                         yield StreamChunk(
                             model=request.model,
-                            finish_reason=self._finish_reason(data, saw_tool_calls),
+                            finish_reason=self._finish_reason(data, tool_count > 0),
                             usage=self._usage(data),
                             provider=self.name,
                         )
