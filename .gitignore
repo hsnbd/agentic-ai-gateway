@@ -39,3 +39,4 @@ bench/.baseline-run/
 
 # tiktoken BPE cache used by the tests
 .cache/
+.ollama-dev.log

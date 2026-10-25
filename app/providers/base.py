@@ -111,6 +111,8 @@ class Provider(abc.ABC):
 
     #: Short stable identifier, e.g. "openai".
     name: str = "base"
+    #: Whether a deployment without an API key is unusable. `auto` skips those.
+    requires_api_key: bool = True
 
     def __init__(self, client: httpx.AsyncClient) -> None:
         self._client = client

@@ -14,6 +14,7 @@ from app.core.errors import (
     PermissionDeniedError,
     RateLimitExceededError,
 )
+from app.core.schemas import AUTO_MODEL
 from app.observability import metrics
 
 if TYPE_CHECKING:
@@ -46,7 +47,8 @@ class AuthStage:
         key = await KeyService(ctx.state.db, ctx.state.redis).lookup(raw_key)
         if key is None or not key.is_valid():
             raise AuthenticationError()
-        if not key.permits_model(ctx.request.model):
+        # `auto` names no model; the router applies the key's lists per deployment.
+        if ctx.request.model != AUTO_MODEL and not key.permits_model(ctx.request.model):
             raise PermissionDeniedError(
                 "This virtual key is not permitted to use the requested model"
             )

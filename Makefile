@@ -1,4 +1,4 @@
-.PHONY: help install dev test test-unit test-integration coverage ui-test test-up test-down lint fmt fmt-check typecheck check bench bench-check bench-baseline ui-install ui-dev ui-build ui-lint up down logs migrate e2e-install e2e-up e2e e2e-api e2e-ui e2e-down
+.PHONY: help install dev dev-deps test test-unit test-integration coverage ui-test test-up test-down lint fmt fmt-check typecheck check bench bench-check bench-baseline ui-install ui-dev ui-build ui-lint up down logs migrate e2e-install e2e-up e2e e2e-api e2e-ui e2e-down
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -7,8 +7,12 @@ install: ## Install Python dependencies into .venv
 	uv venv --python 3.12
 	uv pip install -e ".[dev]"
 
-dev: ## Run the gateway with autoreload
+dev: dev-deps ## Start the dependencies, migrate, then run the gateway with autoreload
+	uv run aigateway migrate
 	uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 4000
+
+dev-deps: ## Start Postgres, Redis, and Ollama (with the embedding models) for `make dev`
+	./scripts/dev-deps.sh
 
 TEST_COMPOSE = docker compose -f tests/integration/docker-compose.test.yaml
 E2E_COMPOSE = docker compose -f e2e/docker-compose.e2e.yaml

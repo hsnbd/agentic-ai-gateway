@@ -573,11 +573,13 @@ async def test_ollama_stream_skips_blank_lines(client: httpx.AsyncClient) -> Non
         + b"\n"
         + json.dumps({"message": {"content": "hi"}, "done": False}).encode()
         + b"\n"
+        + json.dumps({"done": True}).encode()
+        + b"\n"
     )
     with respx.mock(base_url=BASE) as router:
         router.post("/api/chat").mock(return_value=httpx.Response(200, content=body))
         chunks = await _collect(OllamaProvider(client).stream(_request(), _deployment("ollama")))
-    assert [chunk.content for chunk in chunks] == ["hi"]
+    assert [chunk.content for chunk in chunks if chunk.content] == ["hi"]
 
 
 async def test_ollama_404_without_model_hint_and_missing_embeddings(

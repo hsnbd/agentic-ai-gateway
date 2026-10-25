@@ -1,5 +1,6 @@
 """Router: turns a model name into an ordered list of deployments to try.
 
+The reserved name `auto` asks the router to choose among all chat models.
 The router filters by capability and health, applies the caller's virtual-key
 allowlist, then hands the survivors to a strategy for ranking. The full ranked
 list becomes the fallback chain, so failover never needs to re-route.
@@ -9,6 +10,7 @@ from __future__ import annotations
 
 from app.core.errors import NoHealthyDeploymentError, NotFoundError
 from app.core.pipeline import RequestContext, RoutingDecision
+from app.core.schemas import AUTO_MODEL
 from app.providers.base import Deployment
 from app.providers.registry import ProviderRegistry
 from app.routing.breaker import CircuitBreaker
@@ -54,7 +56,9 @@ class Router:
                 rejected[dep.id] = "circuit breaker open (retrying anyway)"
             healthy = capable
 
-        strategy_name = request.routing_strategy or self._default_strategy
+        # `auto` spans every model, so it ranks by the prompt, not by config.
+        default = "complexity" if request.model == AUTO_MODEL else self._default_strategy
+        strategy_name = request.routing_strategy or default
         strategy = get_strategy(strategy_name)
         chain = strategy.order(healthy, request, self._breaker)
         primary, reason = strategy.select(healthy, request, self._breaker)
@@ -75,9 +79,15 @@ class Router:
     def _collect_candidates(
         self, ctx: RequestContext, rejected: dict[str, str]
     ) -> list[Deployment]:
-        """Deployments for the requested model plus any explicit fallbacks."""
+        """Deployments for the requested model plus any explicit fallbacks.
+
+        `auto` stands for every chat deployment on the gateway.
+        """
         request = ctx.request
-        candidates = self._registry.deployments_for(request.model)
+        if request.model == AUTO_MODEL:
+            candidates = self._registry.chat_deployments()
+        else:
+            candidates = self._registry.deployments_for(request.model)
 
         for fallback_model in request.fallbacks:
             try:

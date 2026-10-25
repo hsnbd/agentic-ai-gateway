@@ -20,7 +20,7 @@ from app.core.errors import (
     retry_after_header,
 )
 from app.core.pipeline import Pipeline, RequestContext
-from app.core.schemas import ChatRequest, EmbeddingRequest, Message, Role
+from app.core.schemas import AUTO_MODEL, ChatRequest, EmbeddingRequest, Message, Role
 from app.core.state import GatewayState, get_state
 from app.dialects.base import Dialect
 from app.dialects.openai_dialect import OpenAIDialect
@@ -314,6 +314,10 @@ async def embeddings(request: Request) -> JSONResponse:
 
 
 def _model(model_id: str, state: GatewayState) -> dict[str, Any]:
+    if model_id == AUTO_MODEL:
+        if not state.registry.chat_deployments():
+            raise NotFoundError(f"Model {model_id!r} is not available")
+        return {"id": model_id, "object": "model", "created": 0, "owned_by": "aigateway"}
     deployments = state.registry.deployments_for(model_id)
     if not deployments:
         raise NotFoundError(f"Model {model_id!r} is not available")
@@ -330,7 +334,8 @@ async def models(request: Request) -> JSONResponse:
                 _model(model_id, state)
                 for model_id in state.registry.list_models()
                 if state.registry.deployments_for(model_id)
-            ],
+            ]
+            + ([_model(AUTO_MODEL, state)] if state.registry.chat_deployments() else []),
         }
     )
 

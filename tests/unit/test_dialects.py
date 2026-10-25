@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from fastapi import FastAPI
@@ -367,6 +367,11 @@ def test_routes_unary_models_and_legacy_stream(monkeypatch: pytest.MonkeyPatch) 
             assert model == "m"
             return [Deployment()]
 
+        def chat_deployments(self) -> list[Deployment]:
+            return self.chat
+
+        chat: ClassVar[list[Deployment]] = [Deployment()]
+
     class StubState:
         def __init__(self) -> None:
             self.pipeline = StubPipeline()
@@ -398,6 +403,12 @@ def test_routes_unary_models_and_legacy_stream(monkeypatch: pytest.MonkeyPatch) 
     assert anthropic.json()["type"] == "message"
     assert client.get("/v1/models").json()["data"][0]["id"] == "m"
     assert client.get("/v1/models/m").json()["object"] == "model"
+    assert [m["id"] for m in client.get("/v1/models").json()["data"]] == ["m", "auto"]
+    assert client.get("/v1/models/auto").json()["owned_by"] == "aigateway"
+    Registry.chat = []
+    assert [m["id"] for m in client.get("/v1/models").json()["data"]] == ["m"]
+    assert client.get("/v1/models/auto").status_code == 404
+    Registry.chat = [Deployment()]
     legacy = client.post("/v1/completions", json={"model": "m", "prompt": "hi", "stream": True})
     assert legacy.status_code == 200
     chunks = [

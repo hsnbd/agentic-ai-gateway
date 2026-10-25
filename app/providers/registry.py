@@ -203,6 +203,20 @@ class ProviderRegistry:
         found = [self._deployments[i] for i in ids]
         return found if include_disabled else [d for d in found if d.enabled]
 
+    def chat_deployments(self) -> list[Deployment]:
+        """The `auto` pool: enabled chat deployments that can be called, in config order.
+
+        A deployment whose provider needs a key it was not given would only
+        fail with a 401, so it is left out rather than ranked.
+        """
+        return [
+            d
+            for d in self._deployments.values()
+            if d.enabled
+            and d.capabilities.chat
+            and (d.api_key or not self._providers[d.provider].requires_api_key)
+        ]
+
     def get_deployment(self, deployment_id: str) -> Deployment:
         deployment = self._deployments.get(deployment_id)
         if deployment is None:

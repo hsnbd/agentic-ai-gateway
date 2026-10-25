@@ -254,7 +254,7 @@ and removes before calling a provider. Put them at the top level, or under
 | `no_cache` | Skip the cache for this request |
 | `cache_ttl` | Keep this answer in the cache for the given number of seconds |
 | `fallbacks` | Ordered list of other models to try if this one fails |
-| `routing_strategy` | `priority`, `least-cost`, `lowest-latency`, `weighted`, or `conditional` |
+| `routing_strategy` | `priority`, `least-cost`, `lowest-latency`, `weighted`, `conditional`, or `complexity` |
 | `guardrail_policy` | Use a named guardrail policy |
 | `tags` | Labels recorded in the log; also steer `conditional` routing |
 | `rag` | Ground the answer in a document collection (section 7) |
@@ -775,9 +775,38 @@ aliases:
 | `lowest-latency` | Fastest recently | Interactive use |
 | `weighted` | Random, in proportion to `weight` | A/B tests, gradual rollouts |
 | `conditional` | Based on the request (length, tools, tags) | Mixed workloads |
+| `complexity` | Frontier model for hard prompts, cheap model for easy ones | `model: auto` (its default) |
 
 Set the default with `ROUTING_STRATEGY`; override per request with
 `routing_strategy`.
+
+#### Letting the gateway choose: `model: auto`
+
+Send `"model": "auto"`, or leave `model` out, and the gateway chooses from
+**every** chat model in `models.yaml`. You don't need to list `fallbacks`.
+Unless the request sets `routing_strategy`, it uses `complexity`:
+
+1. Request `tags` that match deployment tags win, cheapest first.
+2. Otherwise the gateway scores the prompt. Each signal adds points: length
+   (+1 at about 400 tokens, +2 at about 1,500), code (+2), reasoning words such as
+   *refactor*, *debug*, *prove*, *trade-offs* (+1 each, up to +2), several
+   questions or a list of 3+ items (+1), tools (+1), and more than 6 turns (+1).
+   Only the latest user message counts for wording.
+3. A score of **3 or more** goes to the cheapest `frontier`-tagged deployment
+   (the most expensive one if nothing is tagged). Lower scores go to the
+   cheapest `cheap`-tagged one (the cheapest overall if nothing is tagged).
+4. Deployments whose context window is too small for the prompt are tried last.
+
+```bash
+curl http://localhost:4000/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"model": "auto", "messages": [{"role": "user", "content": "What is 2+2?"}]}'
+```
+
+The `X-Gateway-Deployment` response header shows which model answered. The
+request log records the score and the signals that fired as the routing reason.
+A virtual key's allowed and blocked models still apply: `auto` only picks from
+models the key may use. `auto` also appears in `GET /v1/models`.
 
 ### 10.3 How failures are handled
 

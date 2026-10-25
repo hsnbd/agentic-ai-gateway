@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.core.errors import GatewayError, InvalidRequestError
 from app.core.schemas import (
+    AUTO_MODEL,
     ChatRequest,
     ChatResponse,
     ImagePart,
@@ -33,7 +34,9 @@ class OpenAIDialect(Dialect):
     def decode_chat(self, payload: dict[str, Any]) -> ChatRequest:
         if not isinstance(payload.get("messages"), list):
             raise InvalidRequestError("'messages' must be an array")
-        if not isinstance(payload.get("model"), str) or not payload["model"]:
+        # No model means the gateway chooses one.
+        model = AUTO_MODEL if payload.get("model") is None else payload["model"]
+        if not isinstance(model, str) or not model:
             raise InvalidRequestError("'model' must be a non-empty string")
         messages = [self._decode_message(message) for message in payload["messages"]]
         raw_choice = payload.get("tool_choice")
@@ -58,7 +61,7 @@ class OpenAIDialect(Dialect):
         try:
             return ChatRequest.model_validate(
                 {
-                    "model": payload["model"],
+                    "model": model,
                     "messages": messages,
                     "tools": [ToolDef.model_validate(tool) for tool in raw_tools],
                     "tool_choice": choice,

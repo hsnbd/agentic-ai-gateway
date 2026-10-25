@@ -24,8 +24,8 @@ policies:
         mode: mask
       - name: input-length
         type: length
-        max_chars: 20000
-        max_messages: 100
+        max_chars: 600000
+        max_messages: 1000
         action: block
         severity: medium
     output:

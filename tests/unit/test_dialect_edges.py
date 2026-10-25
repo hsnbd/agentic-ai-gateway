@@ -118,7 +118,10 @@ def _anthropic(**fields: Any) -> dict[str, Any]:
         (_anthropic(model=""), "'model' must be a non-empty string"),
         (_anthropic(messages="nope"), "'messages' must be an array"),
         (_anthropic(messages=["nope"]), "Each message must be an object"),
-        (_anthropic(messages=[{"role": "system", "content": "x"}]), "'user' or 'assistant'"),
+        (
+            _anthropic(messages=[{"role": "tool", "content": "x"}]),
+            "has role 'tool'; use 'user' or 'assistant'",
+        ),
         (_anthropic(metadata="nope"), "'metadata' must be an object"),
         (_anthropic(temperature="hot"), "Invalid Anthropic chat request"),
         (_anthropic(system=5), "'system' must be a string"),
@@ -415,3 +418,28 @@ def test_anthropic_stream_end_emits_message_delta_when_missing() -> None:
     dialect.encode_chunk(StreamChunk(model="claude", content="x"), state)
     types = [event["type"] for event in _events(dialect.encode_stream_end(state))]
     assert types == ["content_block_stop", "message_delta", "message_stop"]
+
+
+def test_anthropic_accepts_system_and_developer_messages_in_the_list() -> None:
+    """Clients that also speak OpenAI's format put system text in `messages`."""
+    request = AnthropicDialect().decode_chat(
+        _anthropic(
+            system="Top-level rules.",
+            messages=[
+                {"role": "system", "content": "Be terse."},
+                {"role": "developer", "content": [{"type": "text", "text": "Use metric units."}]},
+                {"role": "system", "content": ""},
+                USER,
+            ],
+        )
+    )
+    assert request.system_prompt() == "Top-level rules.\n\nBe terse.\n\nUse metric units."
+    assert [m.role.value for m in request.non_system_messages()] == ["user"]
+
+
+def test_omitted_model_means_auto() -> None:
+    from app.dialects.anthropic_dialect import AnthropicDialect
+
+    assert OpenAIDialect().decode_chat({"messages": [USER]}).model == "auto"
+    assert OpenAIDialect().decode_chat({"model": None, "messages": [USER]}).model == "auto"
+    assert AnthropicDialect().decode_chat({"max_tokens": 10, "messages": [USER]}).model == "auto"

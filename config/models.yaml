@@ -109,6 +109,21 @@ model_list:
     tags: [cheap, fast, long-context]
 
   # ---------------------------------------------------------------- Ollama
+  # `model` must match a name `ollama list` shows on the Ollama host.
+  - model_name: llama3.2
+    params:
+      provider: ollama
+      model: llama3.2:latest
+      defaults:
+        num_ctx: 32768  # Ollama's default (4096) truncates agent prompts
+    capabilities:
+      tools: true
+      max_context_tokens: 32768
+    pricing:
+      input_per_mtok: 0.0
+      output_per_mtok: 0.0
+    tags: [local, free]
+
   - model_name: llama3.1
     params:
       provider: ollama
@@ -120,6 +135,21 @@ model_list:
       input_per_mtok: 0.0
       output_per_mtok: 0.0
     tags: [local, free]
+
+  - model_name: gemma4
+    params:
+      provider: ollama
+      model: gemma4:26b
+      defaults:
+        num_ctx: 32768  # Ollama's default (4096) truncates agent prompts
+    capabilities:
+      tools: true
+      vision: true
+      max_context_tokens: 32768
+    pricing:
+      input_per_mtok: 0.0
+      output_per_mtok: 0.0
+    tags: [local, free, vision]
 
   # Default embedder for the semantic cache and RAG: local, so caching adds
   # no marginal API cost.
@@ -142,4 +172,6 @@ aliases:
   fast: gpt-4o-mini
   cheap: gemini-2-flash
   best: claude-sonnet-4
-  local: llama3.1
+  local: llama3.2
+  llama3.2:latest: llama3.2   # the name Ollama itself uses
+  gemma4:26b: gemma4

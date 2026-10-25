@@ -1,3 +1,7 @@
+# Containers, volumes, and the network are grouped as "aigateway"
+# (not the folder name, "docker").
+name: aigateway
+
 services:
   gateway:
     build: {context: ../.., dockerfile: Dockerfile}
@@ -24,6 +28,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-aigateway}
       POSTGRES_USER: ${POSTGRES_USER:-aigateway}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aigateway}
+    # Published on localhost only, so a gateway run outside Docker (uv run) can reach it.
+    ports: ["127.0.0.1:5432:5432"]
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
@@ -32,6 +38,7 @@ services:
       retries: 12
   redis:
     image: redis/redis-stack:latest
+    ports: ["127.0.0.1:6379:6379"]
     volumes: [redis_data:/data]
     healthcheck:
       test: [CMD, redis-cli, ping]

@@ -103,6 +103,24 @@ async def test_sampling_options_and_no_default_authorization(deployment: Deploym
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_a_configured_context_window_is_sent_as_num_ctx(deployment: Deployment) -> None:
+    # Ollama otherwise loads the model with a small default context and
+    # silently drops the start of longer prompts.
+    route = respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(200, json={"message": {"role": "assistant", "content": "ok"}})
+    )
+    windowed = deployment.model_copy(update={"default_params": {"num_ctx": 32768}})
+    async with httpx.AsyncClient() as client:
+        await OllamaProvider(client).chat(
+            ChatRequest(model="llama3.1", messages=[Message(role=Role.USER, content="test")]),
+            windowed,
+        )
+
+    assert json.loads(route.calls[0].request.content)["options"] == {"num_ctx": 32768}
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_tool_call_request_and_response_translation(deployment: Deployment) -> None:
     route = respx.post("http://localhost:11434/api/chat").mock(
         return_value=httpx.Response(
@@ -354,3 +372,60 @@ async def test_gateway_only_fields_are_not_forwarded(deployment: Deployment) -> 
         "metadata",
         "cache_ttl",
     }.intersection(sent)
+
+
+# What Ollama returns when the model fails mid-run, e.g. out of GPU memory.
+_UNFINISHED = {"model": "", "message": {"role": "", "content": ""}, "done": False}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_an_unfinished_reply_is_a_clear_provider_error(deployment: Deployment) -> None:
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(200, json=_UNFINISHED)
+    )
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ProviderError, match="Ollama server log") as caught:
+            await OllamaProvider(client).chat(
+                ChatRequest(model="llama3.1", messages=[Message(role=Role.USER, content="Hi")]),
+                deployment,
+            )
+    assert caught.value.code == ErrorCode.PROVIDER_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_an_error_in_the_body_is_reported(deployment: Deployment) -> None:
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(200, json={"error": "model runner has unexpectedly stopped"})
+    )
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ProviderError, match="unexpectedly stopped"):
+            await OllamaProvider(client).chat(
+                ChatRequest(model="llama3.1", messages=[Message(role=Role.USER, content="Hi")]),
+                deployment,
+            )
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    ("lines", "message"),
+    [
+        ([_UNFINISHED], "Ollama server log"),
+        ([{"message": {"role": "assistant", "content": "par"}}], "Ollama server log"),
+        ([{"error": "out of memory"}], "out of memory"),
+    ],
+)
+async def test_a_stream_that_never_finishes_is_an_error(
+    deployment: Deployment, lines: list[dict[str, object]], message: str
+) -> None:
+    body = "".join(json.dumps(line) + "\n" for line in lines)
+    respx.post("http://localhost:11434/api/chat").mock(return_value=httpx.Response(200, text=body))
+    request = ChatRequest(
+        model="llama3.1", messages=[Message(role=Role.USER, content="Hi")], stream=True
+    )
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ProviderError, match=message):
+            async for _ in OllamaProvider(client).stream(request, deployment):
+                pass

@@ -18,10 +18,13 @@ policies:
         action: redact
         severity: high
         mode: mask
+      # A backstop against runaway or abusive input, sized for agents: coding
+      # agents send system prompts and files far beyond chat-sized limits. The
+      # model's own context window is the real cap.
       - name: input-length
         type: length
-        max_chars: 20000
-        max_messages: 100
+        max_chars: 600000
+        max_messages: 1000
         action: block
         severity: medium
     output:

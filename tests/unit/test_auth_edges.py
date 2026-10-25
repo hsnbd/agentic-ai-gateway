@@ -475,6 +475,12 @@ async def test_auth_stage_enforces_model_and_route_permissions(db: Database) -> 
         await AuthStage().process(_ctx(db, None, raw, model="allowed"))
 
 
+async def test_auth_stage_leaves_auto_to_the_router(db: Database) -> None:
+    """`auto` names no model, so the allowlist is applied per deployment later."""
+    _, raw = await KeyService(db, None).create_key("scoped-auto", allowed_models=["allowed"])
+    await AuthStage().process(_ctx(db, None, raw, model="auto"))
+
+
 async def test_auth_stage_rpm_limit(db: Database) -> None:
     redis = CounterRedis()
     _, raw = await KeyService(db, None).create_key("rpm", rpm_limit=1)

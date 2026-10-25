@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.schemas import ToolChoice, ToolDef, Usage
 
+#: How often a key or team budget resets (app/auth/quotas.py).
+BudgetPeriod = Literal["daily", "weekly", "monthly"]
+
 
 class Page[T](BaseModel):
     items: list[T]
@@ -123,7 +126,7 @@ class KeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     team_id: str | None = None
     max_budget_usd: float | None = Field(default=None, ge=0)
-    budget_duration: str = "monthly"
+    budget_duration: BudgetPeriod = "monthly"
     rpm_limit: int | None = Field(default=None, gt=0)
     tpm_limit: int | None = Field(default=None, gt=0)
     max_parallel_requests: int | None = Field(default=None, gt=0)
@@ -142,7 +145,7 @@ class KeyUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     team_id: str | None = None
     max_budget_usd: float | None = Field(default=None, ge=0)
-    budget_duration: str | None = None
+    budget_duration: BudgetPeriod | None = None
     rpm_limit: int | None = Field(default=None, gt=0)
     tpm_limit: int | None = Field(default=None, gt=0)
     max_parallel_requests: int | None = Field(default=None, gt=0)
@@ -192,7 +195,7 @@ class TeamCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     max_budget_usd: float | None = Field(default=None, ge=0)
-    budget_period: str = "monthly"
+    budget_period: BudgetPeriod = "monthly"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -200,7 +203,7 @@ class TeamUpdateRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     max_budget_usd: float | None = Field(default=None, ge=0)
-    budget_period: str | None = None
+    budget_period: BudgetPeriod | None = None
     metadata: dict[str, Any] | None = None
 
 

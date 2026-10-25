@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.core.errors import GatewayError, InvalidRequestError
 from app.core.schemas import (
+    AUTO_MODEL,
     ChatRequest,
     ChatResponse,
     FinishReason,
@@ -24,6 +25,9 @@ from app.core.schemas import (
 )
 from app.dialects.base import Dialect, extract_gateway_fields
 
+#: Roles some clients send inside `messages` that mean system instructions.
+_SYSTEM_ROLES = ("system", "developer")
+
 
 class AnthropicDialect(Dialect):
     name = "anthropic"
@@ -37,7 +41,8 @@ class AnthropicDialect(Dialect):
         if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 1:
             raise InvalidRequestError("Field 'max_tokens' must be a positive integer")
 
-        model = payload.get("model")
+        # No model means the gateway chooses one.
+        model = AUTO_MODEL if payload.get("model") is None else payload["model"]
         if not isinstance(model, str) or not model:
             raise InvalidRequestError("Field 'model' must be a non-empty string")
 
@@ -50,12 +55,24 @@ class AnthropicDialect(Dialect):
         if system:
             messages.append(Message(role=Role.SYSTEM, content=system))
 
-        for message in raw_messages:
+        for index, message in enumerate(raw_messages):
             if not isinstance(message, dict):
                 raise InvalidRequestError("Each message must be an object")
             role = message.get("role")
+            if role in _SYSTEM_ROLES:
+                # Anthropic keeps system text in the top-level `system` field, but
+                # clients that also speak OpenAI's format often put it in the
+                # message list; accept it there rather than failing the request.
+                text = self._decode_system(message.get("content"))
+                if text:
+                    messages.append(Message(role=Role.SYSTEM, content=text))
+                continue
             if role not in (Role.USER.value, Role.ASSISTANT.value):
-                raise InvalidRequestError("Message role must be 'user' or 'assistant'")
+                raise InvalidRequestError(
+                    f"messages[{index}] has role {role!r}; use 'user' or 'assistant' "
+                    "(system text goes in the top-level 'system' field, tool results in a "
+                    "'user' message as tool_result blocks)"
+                )
             content, tool_calls, tool_results = self._decode_message_content(message.get("content"))
             if content is not None or tool_calls or not tool_results:
                 messages.append(Message(role=Role(role), content=content, tool_calls=tool_calls))

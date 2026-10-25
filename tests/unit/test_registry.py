@@ -84,3 +84,26 @@ def test_explicit_ids_are_never_rewritten(tmp_path):
     )
 
     assert [d.id for d in registry.deployments_for("chat")] == ["primary", "secondary"]
+
+
+def test_chat_deployments_skip_unusable_models(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    registry = _registry(
+        tmp_path,
+        """
+        model_list:
+          - model_name: chat
+            params: {provider: openai, model: gpt-4o-mini, api_key: sk-test}
+          - model_name: keyless
+            params: {provider: openai, model: gpt-4o}
+          - model_name: local
+            params: {provider: ollama, model: llama3.2}
+          - model_name: retired
+            params: {provider: openai, model: gpt-4o, api_key: sk-test}
+            enabled: false
+          - model_name: embed
+            params: {provider: openai, model: text-embedding-3-small, api_key: sk-test}
+            capabilities: {chat: false, embeddings: true}
+        """,
+    )
+    assert [d.model_name for d in registry.chat_deployments()] == ["chat", "local"]

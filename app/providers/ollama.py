@@ -8,7 +8,7 @@ from typing import Any, NoReturn
 
 import httpx
 
-from app.core.errors import ProviderError
+from app.core.errors import ErrorCode, ProviderError
 from app.core.schemas import (
     ChatRequest,
     ChatResponse,
@@ -32,6 +32,7 @@ class OllamaProvider(Provider):
     """Translate canonical gateway requests to Ollama's native API."""
 
     name = "ollama"
+    requires_api_key = False
 
     def _headers(self, deployment: Deployment) -> dict[str, str]:
         headers = super()._headers(deployment)
@@ -88,6 +89,9 @@ class OllamaProvider(Provider):
             "seed": "seed",
             "presence_penalty": "presence_penalty",
             "frequency_penalty": "frequency_penalty",
+            # Context window; only from deployment `defaults`, since Ollama's
+            # own default is small and it truncates longer prompts silently.
+            "num_ctx": "num_ctx",
         }
         options = {
             ollama_name: merged[name]
@@ -150,6 +154,31 @@ class OllamaProvider(Provider):
                 )
         raise mapped from exc
 
+    def _check_reply(self, data: dict[str, Any], deployment: Deployment) -> None:
+        """Raise for a reply Ollama sent instead of an answer.
+
+        A failed model run (for example out of GPU memory) comes back as HTTP
+        200 with an ``error`` field, or as an empty message with ``done: false``.
+        """
+        if data.get("error"):
+            raise ProviderError(
+                ErrorCode.PROVIDER_ERROR,
+                f"Ollama error: {data['error']}",
+                provider=self.name,
+                model=deployment.provider_model,
+            )
+        if data.get("done") is False:
+            raise self._unfinished(deployment)
+
+    def _unfinished(self, deployment: Deployment) -> ProviderError:
+        return ProviderError(
+            ErrorCode.PROVIDER_UNAVAILABLE,
+            f"Ollama stopped before finishing a reply from {deployment.provider_model}; "
+            "check the Ollama server log (often the model ran out of memory)",
+            provider=self.name,
+            model=deployment.provider_model,
+        )
+
     async def chat(self, request: ChatRequest, deployment: Deployment) -> ChatResponse:
         url = f"{self._base_url(deployment)}/api/chat"
         try:
@@ -160,6 +189,7 @@ class OllamaProvider(Provider):
             )
             response.raise_for_status()
             data = response.json()
+            self._check_reply(data, deployment)
             raw_message = data.get("message", {})
             tool_calls = self._tool_calls(raw_message)
             message = Message(
@@ -187,6 +217,7 @@ class OllamaProvider(Provider):
     ) -> AsyncIterator[StreamChunk]:
         url = f"{self._base_url(deployment)}/api/chat"
         saw_tool_calls = False
+        finished = False
         try:
             payload = self._request_payload(request, deployment)
             payload["stream"] = True
@@ -198,6 +229,8 @@ class OllamaProvider(Provider):
                     if not line.strip():
                         continue
                     data = json.loads(line)
+                    if data.get("error"):
+                        self._check_reply(data, deployment)
                     message = data.get("message", {})
                     calls = self._tool_calls(message)
                     saw_tool_calls = saw_tool_calls or bool(calls)
@@ -215,12 +248,15 @@ class OllamaProvider(Provider):
                             provider=self.name,
                         )
                     if data.get("done") is True:
+                        finished = True
                         yield StreamChunk(
                             model=request.model,
                             finish_reason=self._finish_reason(data, saw_tool_calls),
                             usage=self._usage(data),
                             provider=self.name,
                         )
+            if not finished:
+                raise self._unfinished(deployment)
         except Exception as exc:
             self._raise_mapped(exc, deployment, self)
 

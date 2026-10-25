@@ -23,7 +23,8 @@ of them.
 - **Reliability** — automatic retries with backoff, cross-provider fallback
   chains, and circuit breakers
 - **Smart routing** — least-cost, lowest-latency, weighted, priority, and
-  conditional strategies with health-aware load balancing
+  conditional strategies with health-aware load balancing, plus `model: auto`,
+  which picks a cheap or frontier model by prompt complexity
 - **Semantic caching** — embedding-similarity cache on Redis vector search
 - **RAG** — document ingestion, chunking, embedding, storage, and retrieval; any
   chat request can be grounded in a collection with `aigw.rag`
@@ -47,10 +48,13 @@ uv pip install -e ".[dev]"
 # Configure
 cp .env.example .env   # then add your provider keys
 
-# Run the dependencies and the gateway
-docker compose -f deploy/docker/compose.yaml up -d
-uv run uvicorn app.main:app --reload --port 4000
+# Start Postgres, Redis Stack, and Ollama, migrate, then run the gateway
+make dev
 ```
+
+`make dev` starts Docker Desktop if needed, uses a native Ollama when one is
+installed (else the compose container), and pulls the embedding model. Use
+`make dev-deps` to start only the dependencies.
 
 Then point any OpenAI client at it:
 

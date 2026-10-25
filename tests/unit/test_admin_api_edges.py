@@ -857,3 +857,25 @@ def test_cache_stats_and_entries_when_unavailable_or_sparse(admin_api: Any) -> N
     gateway.redis = None
     stats = client.get("/admin/api/cache/stats", headers=headers).json()
     assert stats["available"] is False and stats["hits"] is None
+
+
+def test_budget_periods_are_validated(admin_api: Any) -> None:
+    """Only periods the budget reset understands are accepted (it errors on others)."""
+    client, _, _ = admin_api
+    headers = _headers(client)
+    bad = {"name": "k", "budget_duration": "month"}
+    assert client.post("/admin/api/keys", json=bad, headers=headers).status_code == 422
+    created = client.post(
+        "/admin/api/keys", json={"name": "k", "budget_duration": "weekly"}, headers=headers
+    )
+    assert created.status_code == 201 and created.json()["budget_duration"] == "weekly"
+    patched = client.patch(
+        f"/admin/api/keys/{created.json()['id']}",
+        json={"budget_duration": "yearly"},
+        headers=headers,
+    )
+    assert patched.status_code == 422
+    team = client.post(
+        "/admin/api/teams", json={"name": "t", "budget_period": "fortnightly"}, headers=headers
+    )
+    assert team.status_code == 422

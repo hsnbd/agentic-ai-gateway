@@ -137,6 +137,11 @@ class McpOptions(BaseModel):
     max_iterations: int = Field(default=8, ge=1, le=50)
 
 
+#: Reserved model name: the gateway picks the model itself, from every chat
+#: deployment, by how demanding the prompt looks (see `ComplexityStrategy`).
+AUTO_MODEL = "auto"
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 

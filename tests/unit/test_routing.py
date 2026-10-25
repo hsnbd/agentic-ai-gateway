@@ -32,12 +32,14 @@ from app.routing.breaker import BreakerState, CircuitBreaker
 from app.routing.resilience import ResilientExecutor, RetryPolicy
 from app.routing.router import Router
 from app.routing.strategies import (
+    ComplexityStrategy,
     ConditionalStrategy,
     LeastCostStrategy,
     LowestLatencyStrategy,
     PriorityStrategy,
     WeightedStrategy,
     get_strategy,
+    score_complexity,
 )
 
 # --------------------------------------------------------------------------
@@ -130,6 +132,9 @@ class FakeRegistry:
 
             raise NotFoundError(f"Model {model!r} is not configured on this gateway")
         return found
+
+    def chat_deployments(self) -> list[Deployment]:
+        return [d for d in self._deployments if d.capabilities.chat]
 
     def provider_for(self, deployment: Deployment) -> FakeProvider:
         return self._providers[deployment.provider]
@@ -343,6 +348,142 @@ def test_conditional_prefers_deployments_matching_request_tags() -> None:
         candidates, make_request(tags=["nowhere"]), CircuitBreaker()
     )
     assert unmatched.id == "eu", "no tag match: the usual heuristics apply (cheap tag)"
+
+
+def _ask(text: str, **kw: Any) -> ChatRequest:
+    return make_request(model="auto", messages=[Message(role=Role.USER, content=text)], **kw)
+
+
+def test_complexity_score_is_zero_for_a_trivial_question() -> None:
+    assert score_complexity(_ask("What is the capital of France?")) == (0, [])
+
+
+def test_complexity_score_reads_every_signal() -> None:
+    history = [Message(role=Role.USER, content="hi")] * 6
+    prompt = (
+        "Refactor and optimize this, then explain the trade-offs:\n"
+        "```python\ndef f(x):\n    return x\n```\n"
+        "1. speed\n2. memory\n3. clarity\n" + "context " * 1000
+    )
+    score, signals = score_complexity(
+        make_request(
+            model="auto",
+            messages=[
+                Message(role=Role.SYSTEM, content="Prove and analyze everything."),
+                *history,
+                Message(role=Role.USER, content=prompt),
+            ],
+            tools=[ToolDef(function=FunctionDef(name="f", parameters={"type": "object"}))],
+        )
+    )
+    assert score == 2 + 2 + 2 + 1 + 1 + 1
+    assert signals == [
+        "long prompt",
+        "code",
+        "reasoning terms: optimize, refactor, trade-offs",
+        "multi-part",
+        "tools",
+        "long conversation",
+    ]
+
+
+def test_complexity_score_counts_medium_prompts_and_ignores_system_wording() -> None:
+    request = make_request(
+        model="auto",
+        messages=[
+            Message(role=Role.SYSTEM, content="Always prove your answers step by step."),
+            Message(role=Role.USER, content="word " * 400),
+        ],
+    )
+    assert score_complexity(request) == (1, ["medium prompt"])
+    assert score_complexity(make_request(messages=[])) == (0, [])
+
+
+def test_complexity_sends_easy_prompts_to_the_cheap_tier() -> None:
+    frontier = make_deployment("frontier", tags=["frontier"], input_price=10.0)
+    cheap = make_deployment("cheap", tags=["cheap"], input_price=0.5)
+    free = make_deployment("free", input_price=0.0, output_price=0.0)
+    strategy = ComplexityStrategy()
+
+    request = _ask("hello")
+    chosen, reason = strategy.select([frontier, free, cheap], request, CircuitBreaker())
+    assert chosen.id == "cheap"
+    assert reason == "complexity 0/3 (no complexity signals) -> cheap tier"
+    order = strategy.order([frontier, free, cheap], request, CircuitBreaker())
+    assert [d.id for d in order] == ["cheap", "free", "frontier"]
+
+
+def test_complexity_sends_hard_prompts_to_the_frontier_tier() -> None:
+    frontier = make_deployment("frontier", tags=["frontier"], input_price=10.0)
+    cheap = make_deployment("cheap", tags=["cheap"], input_price=0.5)
+    mid = make_deployment("mid", input_price=3.0)
+
+    request = _ask("Debug this:\n```\nboom()\n```")
+    chosen, reason = ComplexityStrategy().select([cheap, mid, frontier], request, CircuitBreaker())
+    assert chosen.id == "frontier"
+    assert reason.startswith("complexity 3/3 (code, reasoning terms: debug) -> frontier")
+    order = ComplexityStrategy().order([cheap, mid, frontier], request, CircuitBreaker())
+    assert [d.id for d in order] == ["frontier", "mid", "cheap"]
+
+
+def test_complexity_falls_back_on_price_when_no_tier_tags_exist() -> None:
+    low = make_deployment("low", input_price=0.1)
+    high = make_deployment("high", input_price=9.0)
+    breaker = CircuitBreaker()
+
+    assert ComplexityStrategy().select([high, low], _ask("hi"), breaker)[0].id == "low"
+    assert ComplexityStrategy(threshold=0).select([low, high], _ask("hi"), breaker)[0].id == "high"
+
+
+def test_complexity_honours_request_tags_and_context_windows() -> None:
+    tiny = make_deployment("tiny", tags=["eu"], context=100, input_price=0.0)
+    eu = make_deployment("eu", tags=["eu"], input_price=5.0)
+    other = make_deployment("other", input_price=1.0)
+
+    request = _ask("word " * 200, tags=["eu"])
+    chosen, reason = ComplexityStrategy().select([tiny, other, eu], request, CircuitBreaker())
+    assert chosen.id == "eu"
+    assert reason == "request tags eu matched deployment tags"
+    order = ComplexityStrategy().order([tiny, other, eu], request, CircuitBreaker())
+    assert [d.id for d in order] == ["eu", "other", "tiny"]
+
+    # When nothing can hold the prompt, everything is still tried.
+    chosen, _ = ComplexityStrategy().select([tiny], _ask("word " * 200), CircuitBreaker())
+    assert chosen.id == "tiny"
+
+
+def test_router_auto_considers_every_chat_model() -> None:
+    frontier = make_deployment("frontier", model_name="big", tags=["frontier"], input_price=9.0)
+    cheap = make_deployment("cheap", model_name="small", tags=["cheap"], input_price=0.1)
+    embed = make_deployment("embed", model_name="embed")
+    embed.capabilities.chat = False
+    router = Router(FakeRegistry([frontier, cheap, embed], {}), CircuitBreaker())  # type: ignore[arg-type]
+
+    decision, chain = router.route(make_ctx(_ask("hi")))
+    assert decision.strategy == "complexity"
+    assert [d.id for d in chain] == ["cheap", "frontier"]
+
+    decision, _ = router.route(make_ctx(_ask("Refactor this:\n```\nx = 1;\n```")))
+    assert decision.deployment.id == "frontier"
+
+    # An explicit strategy still wins over the auto default.
+    decision, _ = router.route(make_ctx(_ask("hi", routing_strategy="priority")))
+    assert decision.strategy == "priority"
+
+
+def test_router_auto_applies_the_virtual_key_allowlist() -> None:
+    frontier = make_deployment("frontier", model_name="big", tags=["frontier"])
+    cheap = make_deployment("cheap", model_name="small", tags=["cheap"])
+    router = Router(FakeRegistry([frontier, cheap], {}), CircuitBreaker())  # type: ignore[arg-type]
+
+    class Key:
+        allowed_models: ClassVar[list[str]] = ["big"]
+        blocked_models: ClassVar[list[str]] = []
+
+    ctx = make_ctx(_ask("hi"))
+    ctx.virtual_key = Key()  # type: ignore[assignment]
+    _, chain = router.route(ctx)
+    assert [d.id for d in chain] == ["frontier"]
 
 
 def test_get_strategy_resolves_aliases_and_defaults() -> None:
