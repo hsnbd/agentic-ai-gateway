@@ -308,6 +308,7 @@ class Pipeline:
         if ctx.stop_reason is not None:
             response.stop_reason = ctx.stop_reason
             response.tool_calls_executed = len(ctx.tool_executions)
+            response.tool_executions = list(ctx.tool_executions)
         ctx.response = response
 
 

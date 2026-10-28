@@ -1,7 +1,8 @@
 """Compare two benchmark runs and fail on regressions.
 
 A run is a folder written by ``scripts/bench.py``: one JSON file per tool
-(``evaluate.json``, ``loadtest.json``, ``agent_compat.json``, ``rag_eval.json``).
+(``evaluate.json``, ``loadtest.json``, ``agent_compat.json``, ``rag_eval.json``,
+and ``eval.json`` from the DeepEval answer-quality runner, ``python -m evals``).
 Each file is flattened into dotted metric names prefixed with the tool, such as
 ``loadtest.latency_p95_ms`` or ``rag_eval.vector.recall_at_5``.
 
@@ -36,7 +37,7 @@ from typing import Any
 
 import yaml
 
-TOOLS = ("evaluate", "loadtest", "agent_compat", "rag_eval")
+TOOLS = ("evaluate", "loadtest", "agent_compat", "rag_eval", "eval")
 
 
 def flatten(value: Any, prefix: str = "") -> dict[str, Any]:

@@ -30,6 +30,10 @@ of them.
   chat request can be grounded in a collection with `aigw.rag`
 - **MCP and agents** — Model Context Protocol servers as gateway-callable tools,
   and a server-side agent loop (`aigw.mcp`) that runs them for the model
+- **Agentic applications** — one key per user role with collection and tool
+  allowlists, and tool arguments bound to the end user, so an agent can only
+  act for the user it serves; verified with LangChain and LangGraph (see the
+  [IIT hub](./apps/iit-hub) example)
 - **Tool calling** — normalized function calling across every provider
 - **Guardrails** — regex, denylist, PII, and LLM-judge policies on input and
   output, including redaction of streamed responses
@@ -99,6 +103,17 @@ uv run python scripts/evaluate.py \
 
 It exits non-zero below `--min-success-rate`, so it doubles as a CI gate.
 
+Answer quality is scored with [DeepEval](https://deepeval.com), judged by a
+model the gateway serves. The metrics are relevancy, faithfulness to retrieved
+context, hallucination, tool correctness, toxicity and G-Eval criteria:
+
+```bash
+AIGW_BASE_URL=http://localhost:4000 AIGW_API_KEY=sk-... EVAL_MODEL=gpt-4o-mini make eval
+```
+
+Datasets are YAML (`bench/datasets/eval_gateway.yaml`) and can target the
+gateway itself or any application built on it, over HTTP.
+
 ## Testing
 
 Four suites, from fastest to most complete. [features.md](./features.md) maps
@@ -143,6 +158,8 @@ on port 18000; reports land in `e2e/reports/`. Stop the stacks with
 | [Adding a provider](./docs/providers.md) | The `Provider` contract, capability declaration, pricing units, and the conformance suite |
 | [Agent & SDK setup](./docs/agents.md) | Pointing the OpenAI and Anthropic SDKs, opencode, Claude Code, and Cursor at the gateway |
 | [Console guide](./docs/console.md) | Operating the gateway from the browser |
+| [Agentic applications](./docs/agentic-apps.md) | Role keys, collection scopes, identity-bound tool arguments, LangChain/LangGraph recipes, answer-quality evals |
+| [IIT information hub](./apps/iit-hub/README.md) | A complete LangGraph application on the gateway: guests, students, teachers, approvals |
 
 ## License
 

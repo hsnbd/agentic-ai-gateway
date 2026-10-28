@@ -15,7 +15,7 @@ from app.core.state import GatewayState
 from app.db.models import McpServer
 from app.mcp.registry import McpRegistry
 from app.tools.executor import ToolExecutor
-from app.tools.governance import McpScope, ToolCallContext
+from app.tools.governance import McpScope, ToolBindings, ToolCallContext
 
 router = APIRouter(tags=["mcp"])
 
@@ -115,6 +115,8 @@ class McpRefreshResponse(BaseModel):
 class McpToolCallRequest(BaseModel):
     name: str = Field(min_length=1)
     arguments: dict[str, Any] = Field(default_factory=dict)
+    #: Who the call acts for; fills arguments the key binds to ``end_user``.
+    end_user: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class McpToolCallResponse(BaseModel):
@@ -247,14 +249,19 @@ async def list_tools(
     principal: CurrentPrincipal,
     server_id: str | None = Query(default=None),
 ) -> list[ToolDef]:
-    """The tools the caller may use; a key's MCP allowlists hide the rest."""
+    """The tools the caller may use; a key's MCP allowlists hide the rest.
+
+    Arguments the key binds to the caller's identity are left out of each
+    schema, as they are for the agent loop: the gateway supplies them.
+    """
     registry = _registry(request)
     scope = McpScope.for_key(principal.key)
+    bindings = ToolBindings.for_key(principal.key)
     try:
         tools = await registry.tools_for([server_id] if server_id else None)
     except GatewayError as exc:
         _raise_http(exc)
-    return [tool for tool in tools if scope.allows(registry, tool.function.name)]
+    return [bindings.hide(tool) for tool in tools if scope.allows(registry, tool.function.name)]
 
 
 @router.post("/v1/mcp/tools/call", dependencies=_WRITE, response_model=McpToolCallResponse)
@@ -274,6 +281,8 @@ async def call_tool(
             key_id=key.id if key is not None else None,
             team_id=key.team_id if key is not None else None,
             policy=(key.guardrail_policy if key is not None else None) or "default",
+            end_user=payload.end_user,
+            bindings=ToolBindings.for_key(key),
         ),
     )
     call = ToolCall(name=payload.name, arguments=json.dumps(payload.arguments))

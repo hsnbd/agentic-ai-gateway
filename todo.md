@@ -1,0 +1,6 @@
+- IIT information hub
+- assist student to enroll course
+- Help teacher about program progress
+- Role based information
+- Chatbot - actionable who can work behalf of student
+- Eval like DeepEval

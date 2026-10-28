@@ -13,18 +13,18 @@ import { useMcpServers } from '../api/hooks/useMcpServers';
 import { useGuardrailPolicies } from '../api/hooks/useGuardrails';
 import { useCreateKey, useDeleteKey, useRegenerateKey, useUpdateKey } from '../api/hooks/useKeysAdmin';
 import { BudgetBar, formatDate, useAdminMutationFeedback } from '../features/admin/AdminPrimitives';
-import type { KeyCreateRequest, VirtualKey } from '../api/types';
+import type { KeyCreateRequest, ToolArgBindings, VirtualKey } from '../api/types';
 import type { GridColDef } from '@mui/x-data-grid';
 
 /** Every setting a key has; the create and edit dialogs share it, so they cannot drift apart. */
-type KeyForm = Required<Pick<KeyCreateRequest, 'name' | 'team_id' | 'allowed_models' | 'allowed_mcp_servers' | 'allowed_tools' | 'max_budget_usd' | 'budget_duration' | 'rpm_limit' | 'tpm_limit' | 'max_parallel_requests' | 'guardrail_policy' | 'allowed_routes' | 'expires_at' | 'enabled'>>;
+type KeyForm = Required<Pick<KeyCreateRequest, 'name' | 'team_id' | 'allowed_models' | 'allowed_mcp_servers' | 'allowed_tools' | 'allowed_collections' | 'tool_arg_bindings' | 'max_budget_usd' | 'budget_duration' | 'rpm_limit' | 'tpm_limit' | 'max_parallel_requests' | 'guardrail_policy' | 'allowed_routes' | 'expires_at' | 'enabled'>>;
 
-const emptyForm: KeyForm = { name: '', team_id: null, allowed_models: [], allowed_mcp_servers: [], allowed_tools: [], max_budget_usd: null, budget_duration: 'monthly', rpm_limit: null, tpm_limit: null, max_parallel_requests: null, guardrail_policy: null, allowed_routes: [], expires_at: null, enabled: true };
+const emptyForm: KeyForm = { name: '', team_id: null, allowed_models: [], allowed_mcp_servers: [], allowed_tools: [], allowed_collections: [], tool_arg_bindings: {}, max_budget_usd: null, budget_duration: 'monthly', rpm_limit: null, tpm_limit: null, max_parallel_requests: null, guardrail_policy: null, allowed_routes: [], expires_at: null, enabled: true };
 
 const BUDGET_PERIODS = ['daily', 'weekly', 'monthly'];
 
 function formFromKey(key: VirtualKey): KeyForm {
-  return { name: key.name, team_id: key.team_id, allowed_models: key.allowed_models, allowed_mcp_servers: key.allowed_mcp_servers ?? [], allowed_tools: key.allowed_tools ?? [], max_budget_usd: key.max_budget_usd, budget_duration: key.budget_duration, rpm_limit: key.rpm_limit, tpm_limit: key.tpm_limit, max_parallel_requests: key.max_parallel_requests, guardrail_policy: key.guardrail_policy, allowed_routes: key.allowed_routes, expires_at: key.expires_at, enabled: key.enabled };
+  return { name: key.name, team_id: key.team_id, allowed_models: key.allowed_models, allowed_mcp_servers: key.allowed_mcp_servers ?? [], allowed_tools: key.allowed_tools ?? [], allowed_collections: key.allowed_collections ?? [], tool_arg_bindings: key.tool_arg_bindings ?? {}, max_budget_usd: key.max_budget_usd, budget_duration: key.budget_duration, rpm_limit: key.rpm_limit, tpm_limit: key.tpm_limit, max_parallel_requests: key.max_parallel_requests, guardrail_policy: key.guardrail_policy, allowed_routes: key.allowed_routes, expires_at: key.expires_at, enabled: key.enabled };
 }
 
 export default function Keys() {
@@ -58,7 +58,8 @@ interface KeyFormOptions { models: string[]; teams: { id: string; name: string }
 
 function KeyDialog({ mode, open, form, setForm, options, onClose, onSubmit, submitting }: { mode: 'create' | 'edit'; open: boolean; form: KeyForm; setForm: (form: KeyForm) => void; options: KeyFormOptions; onClose: () => void; onSubmit: () => void; submitting: boolean }) {
   const [restrictModels, setRestrictModels] = useState(form.allowed_models.length > 0);
-  const invalid = !form.name.trim() || (restrictModels && !form.allowed_models.length);
+  const [bindingsValid, setBindingsValid] = useState(true);
+  const invalid = !form.name.trim() || (restrictModels && !form.allowed_models.length) || !bindingsValid;
   const set = (patch: Partial<KeyForm>) => setForm({ ...form, ...patch });
   const number = (value: string) => (value ? Number(value) : null);
   return <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
@@ -72,6 +73,8 @@ function KeyDialog({ mode, open, form, setForm, options, onClose, onSubmit, subm
       <Section title="Access" />
       <ModelAccessField models={options.models} value={form.allowed_models} restricted={restrictModels} onRestrictedChange={setRestrictModels} onChange={(allowed) => set({ allowed_models: allowed })} />
       <McpAccessFields servers={options.mcpServers} value={form} onChange={(access) => set(access)} />
+      <BindingsField value={form.tool_arg_bindings} onChange={(bindings) => set({ tool_arg_bindings: bindings })} onValidChange={setBindingsValid} />
+      <TextField label="Allowed RAG collections" value={form.allowed_collections.join(', ')} onChange={(event) => set({ allowed_collections: parseList(event.target.value) })} helperText="Comma-separated collection names or ids; * is a wildcard. Empty allows every collection the key owns or that is global." />
       <TextField select label="Guardrail policy" value={form.guardrail_policy ?? ''} SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }} onChange={(event) => set({ guardrail_policy: event.target.value || null })}>
         <MenuItem value="">Default</MenuItem>{options.policies.map((policy) => <MenuItem key={policy} value={policy}>{policy}</MenuItem>)}
       </TextField>
@@ -118,6 +121,21 @@ function McpAccessFields({ servers, value, onChange }: { servers: { id: string; 
     <FormControl><InputLabel>Allowed MCP servers</InputLabel><Select multiple label="Allowed MCP servers" value={allowedServers} onChange={(event) => onChange({ allowed_mcp_servers: event.target.value as string[], allowed_tools: allowedTools })} renderValue={(selected) => selected.length ? selected.join(', ') : 'All servers'}>{servers.map((server) => <MenuItem key={server.id} value={server.name}>{server.name}</MenuItem>)}</Select></FormControl>
     <TextField label="Allowed tools" value={allowedTools.join(', ')} onChange={(event) => onChange({ allowed_mcp_servers: allowedServers, allowed_tools: parseList(event.target.value) })} helperText="Comma-separated server__tool names; * is a wildcard (e.g. files__read*). Empty allows every tool." />
   </>;
+}
+
+/** JSON editor for tool_arg_bindings; invalid JSON keeps the last good value and blocks saving. */
+function BindingsField({ value, onChange, onValidChange }: { value: ToolArgBindings; onChange: (bindings: ToolArgBindings) => void; onValidChange: (valid: boolean) => void }) {
+  const [text, setText] = useState(Object.keys(value).length ? JSON.stringify(value) : '');
+  const [error, setError] = useState<string | null>(null);
+  const edit = (next: string) => {
+    setText(next);
+    try {
+      const parsed: unknown = next.trim() ? JSON.parse(next) : {};
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('Expected an object');
+      setError(null); onValidChange(true); onChange(parsed as ToolArgBindings);
+    } catch { setError('Must be a JSON object, e.g. {"crm__*": {"customer_id": "end_user"}}'); onValidChange(false); }
+  };
+  return <TextField label="Bound tool arguments" value={text} onChange={(event) => edit(event.target.value)} error={Boolean(error)} helperText={error ?? 'Arguments the gateway fills from the end user (end_user, key_id, team_id) or always removes (none); hidden from the model.'} multiline minRows={1} />;
 }
 
 function parseList(text: string): string[] {

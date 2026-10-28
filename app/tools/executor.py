@@ -6,12 +6,12 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.errors import InvalidRequestError
 from app.core.pipeline import RequestContext
-from app.core.schemas import ChatResponse, FinishReason, Message, Role, ToolCall, Usage
+from app.core.schemas import ChatResponse, FinishReason, Message, Role, ToolCall, ToolDef, Usage
 from app.db.models import ToolCallLog
 from app.guardrails.base import Action, GuardrailResult, Phase
 from app.guardrails.registry import GuardrailRegistry
@@ -19,8 +19,13 @@ from app.guardrails.stage import persist_violations
 from app.mcp.registry import McpRegistry
 from app.mcp.translate import tool_result_to_message
 from app.observability.metrics import MCP_TOOL_CALL_SECONDS, MCP_TOOL_CALLS
-from app.tools.governance import UNRESTRICTED_SCOPE, McpScope, ToolCallContext
-from app.tools.validation import validate_arguments
+from app.tools.governance import (
+    UNRESTRICTED_SCOPE,
+    McpScope,
+    ToolCallContext,
+    declared_arguments,
+)
+from app.tools.validation import parse_arguments, validate_arguments
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +43,15 @@ class _Audit:
     truncated: bool = False
     guardrail: str | None = None
     error: str | None = None
+    bound_args: list[str] = field(default_factory=list)
 
 
 class ToolExecutor:
     """Runs MCP tool calls under the caller's scope, guardrails, and audit log.
 
     Every call is checked, in order: the tool exists, the caller's key may use
-    its server and name, the arguments match the schema, input guardrails pass
+    its server and name, arguments bound to the caller's identity are filled
+    in (``tool_arg_bindings``), the arguments match the schema, input guardrails pass
     (for policies with ``apply_to_tools``), then the server is called, output
     guardrails screen the result, and oversized results are truncated. One
     ``ToolCallLog`` row records the outcome. Failures become tool messages, so
@@ -90,7 +97,13 @@ class ToolExecutor:
         audit.server_id = server_id
         if not self._scope.allows(self.mcp_registry, tool_call.name):
             return refuse("denied", f"Tool {tool_call.name!r} is not allowed for this API key")
-        arguments = validate_arguments(tool, tool_call.arguments)
+        raw_arguments, unbound = self._bind(tool, tool_call.arguments, audit)
+        if unbound is not None:
+            return refuse(
+                "unbound",
+                f"Tool {tool_call.name!r} needs the caller's {unbound}, and the request has none",
+            )
+        arguments = validate_arguments(tool, raw_arguments)
         if _is_validation_error(arguments):
             return refuse("invalid", json.dumps(arguments, ensure_ascii=False))
 
@@ -133,6 +146,37 @@ class ToolExecutor:
             content = f"{content[:limit]}\n[Tool result truncated: {dropped} more characters]"
         message.content = content
         return message, is_error
+
+    def _bind(self, tool: ToolDef, raw_arguments: str, audit: _Audit) -> tuple[str, str | None]:
+        """Overwrite bound arguments; returns the arguments and a missing source, if any.
+
+        A bound name is always removed from what the model sent, even if the
+        schema does not declare it (a server may accept it anyway); a value is
+        filled in only for declared arguments. Unparseable arguments are left
+        for schema validation to report.
+        """
+        if self._context is None:
+            return raw_arguments, None
+        bound = self._context.bindings.for_tool(tool.function.name)
+        if not bound:
+            return raw_arguments, None
+        try:
+            arguments = parse_arguments(raw_arguments)
+        except (ValueError, SyntaxError):
+            return raw_arguments, None
+        if not isinstance(arguments, dict):
+            return raw_arguments, None
+        declared = declared_arguments(tool.function.parameters)
+        for name, source in sorted(bound.items()):
+            arguments.pop(name, None)
+            if source == "none" or name not in declared:
+                continue
+            value = self._context.binding_value(source)
+            if value is None:
+                return raw_arguments, source
+            arguments[name] = value
+            audit.bound_args.append(name)
+        return json.dumps(arguments, ensure_ascii=False), None
 
     def _guardrails(self) -> tuple[GuardrailRegistry | None, str]:
         """The registry and policy to screen tool traffic with, if the policy asks for it."""
@@ -197,6 +241,7 @@ class ToolExecutor:
                         truncated=audit.truncated,
                         guardrail=audit.guardrail,
                         error=(audit.error or "")[:2000] or None,
+                        bound_args=audit.bound_args,
                     )
                 )
         except Exception:

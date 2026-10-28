@@ -5,12 +5,17 @@ key itself when it has no team. Collections with no owner (created by the
 master key or a console admin, or before ownership existed) are global:
 every caller can read and search them, but only operators can change them.
 
+A key's ``allowed_collections`` (ids or names, ``*`` wildcards) narrows that
+further, e.g. to give each role of one application its own slice of the
+team's collections.
+
 Collections a caller cannot read are reported as not found, so their
 existence is not revealed to other tenants.
 """
 
 from __future__ import annotations
 
+import fnmatch
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +36,8 @@ class RagAccess:
     read_all: bool = False
     team_id: str | None = None
     key_id: str | None = None
+    #: The key's ``allowed_collections``; empty means no narrowing.
+    collections: tuple[str, ...] = ()
 
     @classmethod
     def for_principal(cls, principal: GatewayPrincipal) -> RagAccess:
@@ -38,14 +45,22 @@ class RagAccess:
             return UNRESTRICTED
         if principal.kind == "console":
             return cls(read_all=True)
-        return cls(team_id=principal.team_id, key_id=principal.identifier)
+        return cls(
+            team_id=principal.team_id,
+            key_id=principal.identifier,
+            collections=_allowed_collections(principal.key),
+        )
 
     @classmethod
     def for_context(cls, ctx: RequestContext) -> RagAccess:
         """The access of a chat request's caller, as resolved by the auth stage."""
         if ctx.key_id in (None, "master"):
             return UNRESTRICTED
-        return cls(team_id=ctx.team_id, key_id=ctx.key_id)
+        return cls(
+            team_id=ctx.team_id,
+            key_id=ctx.key_id,
+            collections=_allowed_collections(ctx.virtual_key),
+        )
 
     def owner_fields(self) -> dict[str, str | None]:
         """Ownership for a collection this caller creates."""
@@ -61,17 +76,27 @@ class RagAccess:
             or (self.key_id and collection.owner_key_id == self.key_id)
         )
 
+    def permits(self, collection: RagCollection) -> bool:
+        """Whether the key's collection allowlist (not ownership) admits it."""
+        return not self.collections or any(
+            collection.id == pattern or fnmatch.fnmatchcase(collection.name, pattern)
+            for pattern in self.collections
+        )
+
     def can_read(self, collection: RagCollection) -> bool:
         if self.unrestricted or self.read_all:
             return True
         is_global = collection.owner_team_id is None and collection.owner_key_id is None
-        return is_global or self._owns(collection)
+        return (is_global or self._owns(collection)) and self.permits(collection)
 
     def can_write(self, collection: RagCollection) -> bool:
         return self.unrestricted or self._owns(collection)
 
     def visible_filter(self) -> Any:
-        """SQL condition selecting the collections this caller can read."""
+        """SQL condition selecting the collections this caller owns or that are global.
+
+        The allowlist uses wildcards, so callers apply ``permits`` to the rows.
+        """
         if self.unrestricted or self.read_all:
             return true()
         # Every restricted caller is a virtual key, so key_id is always set here.
@@ -85,3 +110,7 @@ class RagAccess:
 
 
 UNRESTRICTED = RagAccess(unrestricted=True)
+
+
+def _allowed_collections(key: Any) -> tuple[str, ...]:
+    return tuple(getattr(key, "allowed_collections", None) or ())

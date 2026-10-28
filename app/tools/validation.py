@@ -11,7 +11,7 @@ from app.core.schemas import ToolDef
 def validate_arguments(tool: ToolDef, raw_arguments: str) -> dict[str, Any]:
     schema = tool.function.parameters
     try:
-        arguments = _parse_arguments(raw_arguments)
+        arguments = parse_arguments(raw_arguments)
     except (ValueError, SyntaxError, json.JSONDecodeError) as exc:
         return {"error": f"Arguments are not valid JSON: {exc}", "expected_schema": schema}
     if not isinstance(arguments, dict):
@@ -22,7 +22,9 @@ def validate_arguments(tool: ToolDef, raw_arguments: str) -> dict[str, Any]:
     return arguments
 
 
-def _parse_arguments(raw_arguments: str) -> Any:
+def parse_arguments(raw_arguments: str) -> Any:
+    """Parse model-written arguments, repairing common JSON slips (trailing
+    commas, unquoted keys or values, fenced code blocks)."""
     source = raw_arguments.strip()
     if source.startswith("```"):
         source = re.sub(r"\A```(?:json)?\s*|\s*```\Z", "", source, flags=re.IGNORECASE).strip()

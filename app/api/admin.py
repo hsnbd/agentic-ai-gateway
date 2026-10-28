@@ -595,6 +595,8 @@ async def create_key(
             allowed_routes=body.allowed_routes,
             allowed_mcp_servers=body.allowed_mcp_servers,
             allowed_tools=body.allowed_tools,
+            allowed_collections=body.allowed_collections,
+            tool_arg_bindings=body.tool_arg_bindings,
             is_active=body.enabled,
             expires_at=body.expires_at,
             metadata_=body.metadata,

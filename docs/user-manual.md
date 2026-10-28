@@ -422,6 +422,8 @@ rules as below.
 | Control | How |
 |---|---|
 | **Which servers and tools a key may use** | `allowed_mcp_servers` (ids or names) and `allowed_tools` (`server__tool`, `*` wildcards) on the key; empty means all. Other tools are hidden from that key's listings, not offered to its model, and refused if called |
+| **Which RAG collections a key may read** | `allowed_collections` (ids or names, `*` wildcards) on the key narrows the collections its team owns or that are global; empty means no narrowing. Others are reported as not found |
+| **Tool arguments the model may not choose** | `tool_arg_bindings` on the key, e.g. `{"crm__*": {"customer_id": "end_user"}}`: the gateway fills the argument from the request's `user` (agent loop) or `end_user` (direct call), the key, or the team, or always removes it (`none`). Bound arguments are hidden from the model and listed in the tool-call audit. See [agentic-apps.md](agentic-apps.md) |
 | **Guardrails on tool traffic** | Policies with `apply_to_tools: true` check tool arguments with their input rules and tool results with their output rules (section 12) |
 | **Result size** | Results longer than `MCP_MAX_RESULT_CHARS` are truncated before the model sees them |
 | **Audit** | Every call is recorded: who, which tool, outcome, duration, result size, and any guardrail; arguments are stored only as a hash. See the **Tool calls** table on the MCP page (Figure 9.16) or `GET /admin/api/tool-calls` |

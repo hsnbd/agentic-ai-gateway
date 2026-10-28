@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IIT Information Hub</title>
+<style>
+  :root { --bg:#f6f7fb; --panel:#fff; --ink:#1d2433; --muted:#667085; --line:#e4e7ec;
+          --accent:#2457d6; --accent-ink:#fff; --user:#e8efff; --warn:#fff6e5; --warn-line:#f2c46d; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151c; --panel:#1b2030; --ink:#e7eaf0; --muted:#98a2b3; --line:#2c3447;
+            --accent:#6f95ff; --accent-ink:#0b1020; --user:#26324f; --warn:#3a2f18; --warn-line:#8a6a2c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; flex:1; }
+  .badge { padding:2px 10px; border-radius:999px; font-size:13px; background:var(--user); }
+  .badge.student { background:#d9f5e3; color:#11603a; } .badge.teacher { background:#f1e3ff; color:#5b2a86; }
+  main { max-width:820px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:12px; min-height:calc(100vh - 140px); }
+  .msg { padding:10px 14px; border-radius:12px; max-width:85%; white-space:pre-wrap; background:var(--panel); border:1px solid var(--line); }
+  .msg.user { align-self:flex-end; background:var(--user); border-color:transparent; }
+  .card { border:1px solid var(--warn-line); background:var(--warn); border-radius:12px; padding:12px 14px; }
+  .card pre { margin:6px 0; white-space:pre-wrap; font-size:13px; }
+  details { font-size:13px; color:var(--muted); } details p { margin:4px 0; }
+  form { position:sticky; bottom:0; display:flex; gap:8px; padding:12px 16px; background:var(--bg); max-width:820px; margin:0 auto; }
+  input, button { font:inherit; border-radius:10px; border:1px solid var(--line); padding:10px 12px; background:var(--panel); color:var(--ink); }
+  input { flex:1; min-width:0; } button { cursor:pointer; }
+  button.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .hint { color:var(--muted); font-size:13px; }
+  dialog { border:1px solid var(--line); border-radius:12px; background:var(--panel); color:var(--ink); }
+</style>
+</head>
+<body>
+<header>
+  <h1>IIT Information Hub</h1>
+  <span id="badge" class="badge">guest</span>
+  <button id="new">New chat</button>
+  <button id="teacher">Teacher sign-in</button>
+</header>
+<main id="log">
+  <p class="hint">Ask about programs, admission, fees or courses. Want to join? Say which course you would like to enroll in.</p>
+</main>
+<form id="form"><input id="input" placeholder="Type a message…" autocomplete="off" required><button class="primary">Send</button></form>
+<dialog id="signin">
+  <form method="dialog" id="signin-form" class="row" style="flex-direction:column">
+    <strong>Teacher sign-in</strong>
+    <input id="tid" placeholder="Teacher id, e.g. T-03" required>
+    <input id="pin" placeholder="PIN" type="password" required>
+    <div class="row"><button value="cancel" formnovalidate>Cancel</button><button class="primary" value="ok">Sign in</button></div>
+  </form>
+</dialog>
+<script>
+const log = document.getElementById('log'), badge = document.getElementById('badge');
+let thread = null, busy = false;
+
+async function api(path, body) {
+  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || response.statusText);
+  return data;
+}
+function add(cls, text) { const el = document.createElement('div'); el.className = cls; el.textContent = text; log.appendChild(el); el.scrollIntoView({ block: 'end' }); return el; }
+function render(view) {
+  thread = view.thread_id;
+  badge.textContent = view.role === 'guest' ? 'guest' : `${view.role} ${view.subject_id}${view.name ? ' · ' + view.name : ''}`;
+  badge.className = `badge ${view.role}`;
+  if (view.answer) {
+    const el = add('msg', view.answer);
+    if (view.sources.length) {
+      const details = document.createElement('details');
+      details.innerHTML = `<summary>${view.sources.length} source${view.sources.length > 1 ? 's' : ''}</summary>`;
+      for (const s of view.sources) { const p = document.createElement('p'); p.textContent = `${s.source ?? 'IIT document'}: ${s.text.slice(0, 220)}…`; details.appendChild(p); }
+      el.appendChild(details);
+    }
+  }
+  if (view.pending_action) {
+    const card = add('card', '');
+    card.innerHTML = '<strong>Please confirm</strong>';
+    for (const action of view.pending_action.actions) {
+      const pre = document.createElement('pre');
+      pre.textContent = `${action.tool.replace('iit__', '').replaceAll('_', ' ')}\n${JSON.stringify(action.arguments, null, 2)}`;
+      card.appendChild(pre);
+    }
+    const row = document.createElement('div'); row.className = 'row';
+    for (const [label, path, primary] of [['Approve', 'approve', true], ['Decline', 'reject', false]]) {
+      const b = document.createElement('button'); b.textContent = label; if (primary) b.className = 'primary';
+      b.onclick = () => step(async () => { card.remove(); add('msg user', label); render(await api(`/api/threads/${thread}/${path}`)); });
+      row.appendChild(b);
+    }
+    card.appendChild(row);
+  }
+}
+async function step(fn) {
+  if (busy) return; busy = true;
+  const wait = add('hint', '…');
+  try { await fn(); } catch (error) { add('msg', `⚠️ ${error.message}`); } finally { wait.remove(); busy = false; }
+}
+async function start(body) { log.innerHTML = ''; render(await api('/api/threads', body)); add('hint', body ? 'Signed in.' : 'New conversation started as a guest.'); }
+
+document.getElementById('form').onsubmit = (event) => {
+  event.preventDefault();
+  const input = document.getElementById('input'), text = input.value.trim(); if (!text) return;
+  input.value = ''; add('msg user', text);
+  step(async () => { if (!thread) await start(); render(await api(`/api/threads/${thread}/messages`, { content: text })); });
+};
+document.getElementById('new').onclick = () => step(() => start());
+const dialog = document.getElementById('signin');
+document.getElementById('teacher').onclick = () => dialog.showModal();
+dialog.addEventListener('close', () => {
+  if (dialog.returnValue !== 'ok') return;
+  step(() => start({ teacher_id: document.getElementById('tid').value, pin: document.getElementById('pin').value }));
+});
+step(() => start());
+</script>
+</body>
+</html>

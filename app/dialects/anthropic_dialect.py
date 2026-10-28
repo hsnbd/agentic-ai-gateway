@@ -160,6 +160,7 @@ class AnthropicDialect(Dialect):
         if response.stop_reason:
             extras["stop_reason"] = response.stop_reason
             extras["tool_calls_executed"] = response.tool_calls_executed
+            extras["tool_executions"] = response.tool_executions
         return {"aigw": extras} if extras else {}
 
     def encode_chunk(self, chunk: StreamChunk, state: dict[str, Any]) -> list[str]:

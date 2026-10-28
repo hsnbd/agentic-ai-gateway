@@ -115,6 +115,8 @@ logic layer (API client, SSE parsing, playground inspector, formatters, auth, sh
 | **File ingestion**: .txt, .md, .html, .pdf, .docx (`rag-docs` extra, in the Docker image) | ✅ | **new**: unit (`test_rag_extract.py`), int |
 | **Ingestion at scale**: size limit (413), background ingestion for large documents (202, poll), interrupted ingestions failed on restart, re-upload replaces by source | ✅ | **new**: int (`test_rag_ingestion.py`) |
 | RAG metrics: retrievals, latency, empty results, ingestions, reranks | ✅ | **new**: int (`test_rag_mcp_metrics.py`) |
+| **Per-key collection allowlist** (`allowed_collections`, ids or names with wildcards): narrows ownership for listing, search, and `aigw.rag`, e.g. one key per application role | ✅ | **new**: migration 0005; unit (`test_key_scopes.py`), int (`test_key_scopes_http.py`) |
+| **Multi-collection search**: `collection_ids` on `/v1/rag/search` and `/v1/rag/query`, `extra_collection_ids` in `aigw.rag`; merged by score, one embedding space required, each chunk tagged with its collection | ✅ | **new**: unit, int |
 
 ## 6. MCP and tools
 
@@ -137,6 +139,8 @@ logic layer (API client, SSE parsing, playground inspector, formatters, auth, sh
 | **Resilience**: per-server circuit breaker; expired sessions re-initialised and replayed; crashed stdio servers restarted with a fresh handshake; stderr kept for diagnostics; per-server timeouts; discovery retry | ✅ | **new**: unit (`test_mcp_resilience.py`); e2e fake server expires sessions every 5 s |
 | Background health checks (`MCP_HEALTH_INTERVAL_SECONDS`) | ✅ | **new**: unit |
 | MCP metrics: tool calls by server, tool, and status; latency; breaker state | ✅ | **new**: int |
+| **Identity-bound tool arguments** (`tool_arg_bindings` per key): arguments filled from the end user (`user` / `end_user`), key or team, or always removed; hidden from the schemas the model sees; `unbound` refusal; `bound_args` in the audit | ✅ | **new**: migration 0005; unit (`test_key_scopes.py`), int (`test_key_scopes_http.py`) |
+| Executed agent-loop tools reported per response (`aigw.tool_executions`: name, ms, error, hop) | ✅ | **new**: unit (`test_dialect_edges.py`) |
 
 ## 7. Guardrails
 
@@ -148,6 +152,7 @@ logic layer (API client, SSE parsing, playground inspector, formatters, auth, sh
 | Block / redact observed over HTTP (input PII, prompt injection, output secrets, per-key policy) | ✅ | int (`test_policies_http.py`) |
 | Output guardrails on streamed responses: redaction across chunk boundaries (holdback window), block ends the stream | ✅ | **new** `StreamRedactor`; unit, int, e2e |
 | LLM-judge guardrail (`type: llm_judge`, threshold, `on_error` allow/block); judge calls bypass the pipeline and are not billed | ✅ | **new**; unit, int (`test_llm_judge_http.py`), e2e (`judged` policy in `config/guardrails.eval.yaml`) |
+| `user-data` policy for applications that collect their users' contact details: keeps email addresses, still blocks injection and redacts ids, cards, and leaked secrets | 🟡 | **new**: exercised end to end by `apps/iit-hub` |
 
 ## 8. Auth, virtual keys, quotas
 
@@ -255,6 +260,9 @@ All console scenarios run in Chromium via Playwright (`e2e/features/ui`).
 | Load test in CI with success and p95 gates | ✅ | **new**: CI `bench` job |
 | Repo-wide `ruff format`, enforced in CI | ✅ | **new**: `make fmt-check` |
 | Token counting never blocks on tokenizer downloads (bounded background load; files baked into the image) | ✅ | **fixed**: requests stalled on first use with a slow network; unit |
+| **LangChain / LangGraph compatibility**: `ChatOpenAI` invoke, stream, `bind_tools`, `with_structured_output`, `OpenAIEmbeddings`, a ReAct agent; `user` and `aigw` pass through | ✅ | **new**: int (`test_langchain_compat.py`), `scripts/agent_compat.py` LangChain section |
+| **Answer-quality evaluation with DeepEval** (`python -m evals`): gateway or HTTP targets, the gateway as judge, relevancy, faithfulness, contextual, hallucination, tool correctness, toxicity, bias, PII, G-Eval; gated as `eval.*` in `bench/thresholds.yaml` | ✅ | **new**: unit (`test_evals.py`), `make eval`, `bench/datasets/eval_gateway.yaml` |
+| **Reference agent application**: `apps/iit-hub`, a LangGraph app (roles, approvals, RAG, governed tools) that uses only the gateway's API | ✅ | **new**: its own suite (`make hub-test`), DeepEval dataset (`make hub-eval`); [docs/agentic-apps.md](docs/agentic-apps.md) |
 
 ## Proposed next steps
 

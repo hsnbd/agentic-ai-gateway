@@ -65,3 +65,37 @@ policies:
         action: redact
         severity: critical
         replacement: "[API_KEY_REDACTED]"
+
+  user-data:
+    description: >-
+      For applications that collect their own users' contact details (sign-up,
+      enrollment, support): blocks prompt injection, oversized input and leaked
+      secrets like the default policy, but keeps email addresses so tools can act
+      on them. Government ids and card numbers are still redacted.
+    apply_to_tools: true
+    input:
+      - name: block-prompt-injection
+        type: regex
+        pattern: "ignore\\s+(?:all\\s+)?previous\\s+instructions|disregard\\s+(?:all\\s+)?prior\\s+instructions|reveal\\s+(?:your\\s+)?system\\s+prompt"
+        ignorecase: true
+        action: block
+        severity: high
+      - name: redact-sensitive-ids
+        type: pii
+        entities: [SSN, CREDIT_CARD]
+        action: redact
+        severity: high
+        mode: mask
+      - name: input-length
+        type: length
+        max_chars: 200000
+        max_messages: 400
+        action: block
+        severity: medium
+    output:
+      - name: redact-leaked-api-keys
+        type: regex
+        pattern: "(?i)(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|ASIA[A-Z0-9]{16}|Bearer\\s+[A-Za-z0-9._~+/=-]{12,})"
+        action: redact
+        severity: critical
+        replacement: "[API_KEY_REDACTED]"

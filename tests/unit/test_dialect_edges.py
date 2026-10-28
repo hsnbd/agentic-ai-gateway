@@ -310,7 +310,11 @@ def test_anthropic_encodes_parts_images_and_gateway_extras() -> None:
     )
     body = AnthropicDialect().encode_chat(
         _anthropic_response(
-            message, sources=[{"id": "s"}], stop_reason="max_iterations", tool_calls_executed=2
+            message,
+            sources=[{"id": "s"}],
+            stop_reason="max_iterations",
+            tool_calls_executed=2,
+            tool_executions=[{"name": "t", "ms": 1.0, "is_error": False, "iteration": 1}],
         )
     )
     blocks = body["content"]
@@ -323,6 +327,7 @@ def test_anthropic_encodes_parts_images_and_gateway_extras() -> None:
         "sources": [{"id": "s"}],
         "stop_reason": "max_iterations",
         "tool_calls_executed": 2,
+        "tool_executions": [{"name": "t", "ms": 1.0, "is_error": False, "iteration": 1}],
     }
 
 

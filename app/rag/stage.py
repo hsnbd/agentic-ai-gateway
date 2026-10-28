@@ -34,18 +34,22 @@ async def retrieve_and_augment(
     query = options.query or next(
         (m.text() for m in reversed(request.messages) if m.role.value == "user"), ""
     )
+    search_options: dict[str, Any] = {
+        "top_k": options.top_k,
+        "min_score": options.min_score,
+        "diversity": options.diversity,
+        "filters": options.filters,
+        "search_mode": options.search_mode,
+        "rerank_model": options.rerank_model,
+        "access": access,
+    }
     try:
-        chunks = await service.search(
-            options.collection_id,
-            query,
-            top_k=options.top_k,
-            min_score=options.min_score,
-            diversity=options.diversity,
-            filters=options.filters,
-            search_mode=options.search_mode,
-            rerank_model=options.rerank_model,
-            access=access,
-        )
+        if options.extra_collection_ids:
+            chunks = await service.search_many(
+                [options.collection_id, *options.extra_collection_ids], query, **search_options
+            )
+        else:
+            chunks = await service.search(options.collection_id, query, **search_options)
     except (NotFoundError, InvalidRequestError):
         raise
     except Exception as exc:
@@ -79,6 +83,11 @@ class RagStage:
         ctx.__dict__.setdefault("_rag_details", {}).update(
             {
                 "collection_id": options.collection_id,
+                **(
+                    {"extra_collection_ids": options.extra_collection_ids}
+                    if options.extra_collection_ids
+                    else {}
+                ),
                 "chunks": len(ctx.rag_sources),
                 "mode": options.mode,
                 "ms": round((time.perf_counter() - started) * 1000, 3),

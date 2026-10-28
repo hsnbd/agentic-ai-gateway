@@ -39,3 +39,11 @@ metrics:
   rag_eval.vector.mrr: {max_drop: 0.05}
   rag_eval.hybrid.recall_at_5: {max_drop: 0.05, min: 0.9}
   rag_eval.hybrid.mrr: {max_drop: 0.05}
+
+  # ---- python -m evals: answer quality (DeepEval, judged through the gateway).
+  # Needs a real model as target and judge, so it is optional in `make bench`;
+  # `make eval` produces it.
+  eval.pass_rate: {min: 0.8, required: false}
+  eval.errors: {max: 0, required: false}
+  eval.metrics.answer_relevancy: {min: 0.7, required: false}
+  eval.metrics.faithfulness: {min: 0.7, required: false}

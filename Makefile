@@ -1,4 +1,4 @@
-.PHONY: help install dev dev-deps test test-unit test-integration coverage ui-test test-up test-down lint fmt fmt-check typecheck check bench bench-check bench-baseline ui-install ui-dev ui-build ui-lint up down logs migrate e2e-install e2e-up e2e e2e-api e2e-ui e2e-down
+.PHONY: help install dev dev-deps test test-unit test-integration coverage ui-test test-up test-down lint fmt fmt-check typecheck check bench bench-check bench-baseline eval hub hub-mcp hub-seed hub-run hub-test hub-eval ui-install ui-dev ui-build ui-lint up down logs migrate e2e-install e2e-up e2e e2e-api e2e-ui e2e-down
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -36,17 +36,17 @@ test-down: ## Stop the test datastores
 	$(TEST_COMPOSE) down -v
 
 lint: ## Lint with ruff
-	uv run ruff check app tests scripts
+	uv run ruff check app tests scripts evals
 
 fmt: ## Format and autofix with ruff
-	uv run ruff format app tests scripts
-	uv run ruff check --fix app tests scripts
+	uv run ruff format app tests scripts evals
+	uv run ruff check --fix app tests scripts evals
 
 fmt-check: ## Fail if any file is not ruff-formatted
-	uv run ruff format --check app tests scripts
+	uv run ruff format --check app tests scripts evals
 
 typecheck: ## Type-check with mypy
-	uv run mypy app
+	uv run mypy app evals
 
 check: lint fmt-check typecheck coverage ui-test ## Lint, format, type-check, and run every gated suite
 
@@ -103,8 +103,47 @@ bench: e2e-up ## Run every benchmark against the e2e stack; results in bench/res
 bench-check: e2e-up ## Benchmark and fail on regressions against bench/baseline
 	uv run python scripts/bench.py --baseline $(BENCH_BASELINE)
 
+EVAL_DATASET ?= bench/datasets/eval_gateway.yaml
+EVAL_OUT ?= bench/results/eval
+
+eval: ## Score answer quality with DeepEval (needs AIGW_BASE_URL, AIGW_API_KEY, EVAL_MODEL) and gate it
+	uv run python -m evals $(EVAL_DATASET) --out $(EVAL_OUT)
+	uv run python scripts/bench_compare.py $(EVAL_OUT) $(EVAL_OUT)
+
 bench-baseline: e2e-up ## Re-record bench/baseline from a fresh run (review the diff before committing)
 	rm -rf $(BENCH_BASELINE)
 	uv run python scripts/bench.py --out bench/.baseline-run
 	mv "$$(ls -d bench/.baseline-run/*/ | tail -1)" $(BENCH_BASELINE)
 	rm -rf bench/.baseline-run
+
+# ---- IIT information hub (apps/iit-hub): a LangGraph app built on the gateway
+HUB = cd apps/iit-hub &&
+HUB_PORT ?= 8100
+HUB_MCP_PORT ?= 4300
+GATEWAY_URL ?= http://localhost:4000
+
+hub: ## Run the whole IIT hub: mock IIT system, gateway provisioning, and the hub (needs the gateway running)
+	@curl -sf $(GATEWAY_URL)/healthz >/dev/null || { echo "Gateway not reachable at $(GATEWAY_URL); start it first (make dev)"; exit 1; }
+	@cd apps/iit-hub && uv sync -q && \
+	  { uv run python -m mock_iit.mcp_server --port $(HUB_MCP_PORT) > mcp.log 2>&1 & MCP=$$!; } && \
+	  trap 'kill $$MCP 2>/dev/null' EXIT INT TERM && \
+	  for i in $$(seq 30); do nc -z 127.0.0.1 $(HUB_MCP_PORT) 2>/dev/null && break; sleep 0.5; done && \
+	  uv run --env-file ../../.env python -m mock_iit.seed \
+	    --gateway $(GATEWAY_URL) --mcp-url http://127.0.0.1:$(HUB_MCP_PORT)/mcp $(if $(HUB_RESET),--reset,) && \
+	  echo "IIT hub on http://localhost:$(HUB_PORT) (Ctrl+C stops it and the mock IIT system)" && \
+	  uv run uvicorn iit_hub.api:app --port $(HUB_PORT)
+
+hub-mcp: ## Run the hub's mock IIT student information system (MCP server on :4300)
+	$(HUB) uv run python -m mock_iit.mcp_server --port 4300
+
+hub-seed: ## Provision the running gateway for the hub (team, MCP server, collections, role keys)
+	$(HUB) uv run --env-file ../../.env python -m mock_iit.seed --reset
+
+hub-run: ## Run the IIT hub on http://localhost:8100
+	$(HUB) uv run uvicorn iit_hub.api:app --port $(HUB_PORT)
+
+hub-test: ## Test the IIT hub
+	$(HUB) uv run pytest
+
+hub-eval: ## DeepEval answer quality of the running hub (needs AIGW_API_KEY and EVAL_JUDGE_MODEL)
+	HUB_URL=http://localhost:$(HUB_PORT) uv run python -m evals apps/iit-hub/evals/dataset.yaml --out bench/results/hub-eval

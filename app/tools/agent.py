@@ -9,7 +9,7 @@ from app.core.errors import PermissionDeniedError
 from app.core.pipeline import Executor, RequestContext, _replay_as_stream
 from app.core.schemas import ChatResponse, StreamChunk
 from app.tools.executor import ToolExecutor, run_tool_loop
-from app.tools.governance import McpScope, ToolCallContext
+from app.tools.governance import McpScope, ToolBindings, ToolCallContext
 
 if TYPE_CHECKING:
     from app.mcp.registry import McpRegistry
@@ -41,8 +41,10 @@ class AgenticExecutor:
                 raise PermissionDeniedError(f"This API key may not use MCP server {server_id!r}")
         mcp_tools = await registry.tools_for(options.servers)
         client_names = {tool.function.name for tool in ctx.request.tools}
+        # The model never sees arguments the gateway binds to the caller's identity.
+        bindings = ToolBindings.for_key(ctx.virtual_key)
         offered = [
-            tool
+            bindings.hide(tool)
             for tool in mcp_tools
             if tool.function.name not in client_names and scope.allows(registry, tool.function.name)
         ]

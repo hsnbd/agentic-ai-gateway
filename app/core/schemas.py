@@ -127,6 +127,9 @@ class RagOptions(BaseModel):
     search_mode: Literal["vector", "hybrid"] = "vector"
     #: Chat model that reorders the candidates by relevance; None skips reranking.
     rerank_model: str | None = None
+    #: More collections searched with ``collection_id``; chunks from all of them
+    #: compete on score for the ``top_k`` slots.
+    extra_collection_ids: list[str] = Field(default_factory=list)
 
 
 class McpOptions(BaseModel):
@@ -261,6 +264,8 @@ class ChatResponse(BaseModel):
     stop_reason: str | None = None
     #: MCP tool calls the gateway executed on the caller's behalf.
     tool_calls_executed: int = 0
+    #: One record per executed call: name, ms, is_error, iteration.
+    tool_executions: list[dict[str, Any]] = Field(default_factory=list)
 
     @property
     def text(self) -> str:

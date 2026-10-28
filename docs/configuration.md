@@ -244,7 +244,7 @@ the gateway and never forwarded upstream:
 | `routing_strategy` | Override the strategy for this request |
 | `guardrail_policy` | Use a named policy |
 | `tags` | Labels recorded in the request log. With `routing_strategy: conditional`, deployments whose `tags` share one with the request are preferred (cheapest first) |
-| `rag` | Ground the request in a RAG collection: `{"collection_id": ..., "top_k": 5, "min_score": 0, "mode": "system" \| "user", "search_mode": "vector" \| "hybrid", "rerank_model": null, "max_context_tokens": 4000, "filters": {...}}`. `search_mode: hybrid` adds keyword (BM25) search fused by rank; `rerank_model` has a chat model reorder the candidates. Sources come back in `aigw.sources` and `X-Gateway-RAG-Sources` |
+| `rag` | Ground the request in a RAG collection: `{"collection_id": ..., "top_k": 5, "min_score": 0, "mode": "system" \| "user", "search_mode": "vector" \| "hybrid", "rerank_model": null, "max_context_tokens": 4000, "filters": {...}}`. `search_mode: hybrid` adds keyword (BM25) search fused by rank; `rerank_model` has a chat model reorder the candidates. `extra_collection_ids: [...]` searches more collections (same embedding model) and merges by score. Sources come back in `aigw.sources` and `X-Gateway-RAG-Sources` |
 | `mcp` | Let the gateway run MCP tools for this request: `{"servers": [ids] \| null, "max_iterations": 8}`. See [Agent & SDK setup](./agents.md#server-side-rag-and-tools) |
 
 Every field can also be nested under `aigw` (e.g. OpenAI SDK

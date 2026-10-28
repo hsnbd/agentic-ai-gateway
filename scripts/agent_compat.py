@@ -1,15 +1,17 @@
-"""Validate the gateway against the official OpenAI and Anthropic SDKs.
+"""Validate the gateway against the official OpenAI and Anthropic SDKs, and
+the LangChain / LangGraph stack built on them.
 
 Coding agents (opencode, Claude Code, Cursor) drive the gateway through these
-SDKs rather than raw HTTP, so SDK-level acceptance is what actually decides
-whether an agent works. The SDKs are strict about response shapes in ways a
+SDKs rather than raw HTTP, and agent frameworks such as LangChain wrap them
+again, so SDK-level acceptance is what actually decides whether an agent works.
+The SDKs are strict about response shapes in ways a
 hand-written ``curl`` check is not: they validate types, reassemble streaming
 deltas, and accumulate tool-call arguments across chunks.
 
 Usage::
 
     uv run python scripts/agent_compat.py --base-url http://localhost:4030 \\
-        --api-key sk-eval-master --model eval-chat
+        --api-key sk-eval-master --model eval-chat [--embedding-model eval-embed]
 
 Exit code is 0 when every check passes and 1 otherwise.
 """
@@ -241,6 +243,111 @@ def anthropic_checks(results: Results, base_url: str, api_key: str, model: str) 
     results.check("messages (streaming)", streaming)
 
 
+def langchain_checks(
+    results: Results,
+    base_url: str,
+    api_key: str,
+    model: str,
+    *,
+    embedding_model: str | None = None,
+    http_client: Any = None,
+) -> None:
+    """LangChain chat models, tools, structured output, embeddings, and a
+    LangGraph ReAct agent, all pointed at the gateway as an OpenAI endpoint.
+
+    ``http_client`` lets tests drive an in-process gateway (a TestClient).
+    """
+    from langchain_core.messages import HumanMessage, ToolMessage
+    from langchain_core.tools import tool
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+    from langgraph.prebuilt import create_react_agent
+    from pydantic import BaseModel, Field
+
+    print("\nLangChain / LangGraph")
+    llm = ChatOpenAI(
+        model=model,
+        base_url=f"{base_url}/v1",
+        api_key=api_key,  # type: ignore[arg-type]
+        max_retries=0,
+        http_client=http_client,
+    )
+
+    @tool
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return f"Sunny in {city}"
+
+    class Weather(BaseModel):
+        """The weather in a city."""
+
+        city: str = Field(description="City name")
+        summary: str = Field(description="One-line forecast")
+
+    def invoke() -> str:
+        reply = llm.invoke("Say hello.")
+        if not reply.content:
+            raise AssertionError("empty content")
+        usage = reply.usage_metadata or {}
+        if not usage.get("total_tokens"):
+            raise AssertionError("usage_metadata not reported")
+        return f"{usage['total_tokens']} tokens"
+
+    def stream() -> str:
+        chunks = list(llm.stream("Count to five."))
+        text = "".join(str(chunk.content) for chunk in chunks)
+        if len(chunks) < 2 or not text.strip():
+            raise AssertionError(f"{len(chunks)} chunks, {len(text)} chars")
+        return f"{len(chunks)} chunks"
+
+    def bind_tools() -> str:
+        reply = llm.bind_tools([get_weather]).invoke("__tool__ weather in Berlin")
+        calls = getattr(reply, "tool_calls", [])
+        if not calls or calls[0]["name"] != "get_weather":
+            raise AssertionError(f"tool_calls={calls}")
+        return f"{calls[0]['name']}({calls[0]['args']})"
+
+    def structured_output() -> str:
+        structured = llm.with_structured_output(Weather, method="function_calling")
+        result = structured.invoke("__tool__ weather in Berlin")
+        if not isinstance(result, Weather):
+            raise AssertionError(f"got {type(result).__name__}")
+        return f"Weather(city={result.city!r})"
+
+    def react_agent() -> str:
+        agent = create_react_agent(llm, [get_weather])
+        state = agent.invoke(
+            {"messages": [HumanMessage("__tool__ weather in Berlin")]},
+            {"recursion_limit": 6},
+        )
+        tool_messages = [m for m in state["messages"] if isinstance(m, ToolMessage)]
+        if not tool_messages or "Sunny" not in str(tool_messages[0].content):
+            raise AssertionError("the agent never ran its tool")
+        return f"{len(state['messages'])} messages, tool result fed back"
+
+    def embeddings() -> str:
+        assert embedding_model is not None
+        embedder = OpenAIEmbeddings(
+            model=embedding_model,
+            base_url=f"{base_url}/v1",
+            api_key=api_key,  # type: ignore[arg-type]
+            http_client=http_client,
+            check_embedding_ctx_length=False,
+            max_retries=0,
+        )
+        vectors = embedder.embed_documents(["alpha", "beta"])
+        if len(vectors) != 2 or not vectors[0]:
+            raise AssertionError("no vectors")
+        return f"2 vectors x {len(vectors[0])} dims"
+
+    results.check("langchain invoke", invoke)
+    results.check("langchain stream", stream)
+    results.check("langchain bind_tools", bind_tools)
+    results.check("langchain with_structured_output", structured_output)
+    results.check("langgraph react agent", react_agent)
+    if embedding_model:
+        results.check("langchain embeddings", embeddings)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://localhost:4030")
@@ -250,6 +357,15 @@ def main() -> int:
         "--skip-anthropic",
         action="store_true",
         help="Skip the Anthropic dialect checks.",
+    )
+    parser.add_argument(
+        "--skip-langchain",
+        action="store_true",
+        help="Skip the LangChain / LangGraph checks.",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        help="Also check LangChain embeddings with this model.",
     )
     parser.add_argument(
         "--json",
@@ -267,6 +383,14 @@ def main() -> int:
         openai_checks(results, base_url, args.api_key, args.model)
         if not args.skip_anthropic:
             anthropic_checks(results, base_url, args.api_key, args.model)
+        if not args.skip_langchain:
+            langchain_checks(
+                results,
+                base_url,
+                args.api_key,
+                args.model,
+                embedding_model=args.embedding_model,
+            )
 
     total = len(results.passed) + len(results.failed)
     if args.json:

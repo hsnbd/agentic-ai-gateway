@@ -202,6 +202,7 @@ class OpenAIDialect(Dialect):
                     {
                         "stop_reason": response.stop_reason,
                         "tool_calls_executed": response.tool_calls_executed,
+                        "tool_executions": response.tool_executions,
                     }
                     if response.stop_reason
                     else {}

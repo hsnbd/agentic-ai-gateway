@@ -119,3 +119,70 @@ Then('the collection index is in sync with {int} chunk(s)', async function (this
   assert.equal(status.in_sync, true, JSON.stringify(status));
   assert.equal(status.indexed_chunks, chunks, JSON.stringify(status));
 });
+
+// ---------------------------------------------------------------- Key scopes
+
+Given(
+  'a virtual key that binds its {string} tool\'s {string} argument to the end user',
+  async function (this: GatewayWorld, tool: string, argument: string) {
+    const key = await this.createKey({
+      tool_arg_bindings: { [`${this.vars.mcpPrefix}__${tool}`]: { [argument]: 'end_user' } },
+    });
+    this.credential = key.secret;
+  },
+);
+
+Then(
+  'its {string} tool is listed without a {string} argument',
+  async function (this: GatewayWorld, tool: string, argument: string) {
+    const res = await this.request('GET', `/v1/mcp/tools?server_id=${this.vars.mcpServerId}`, {
+      token: this.credential,
+    });
+    assert.equal(res.status, 200, res.text);
+    const listed = (res.json as Array<{ function: { name: string; parameters: { properties: object } } }>).find(
+      (t) => t.function.name === `${this.vars.mcpPrefix}__${tool}`,
+    );
+    assert.ok(listed, res.text);
+    assert.ok(!(argument in listed.function.parameters.properties), JSON.stringify(listed));
+  },
+);
+
+When(
+  'I call its {string} tool with text {string} for end user {string}',
+  async function (this: GatewayWorld, tool: string, text: string, endUser: string) {
+    const res = await this.request('POST', '/v1/mcp/tools/call', {
+      token: this.credential,
+      body: { name: `${this.vars.mcpPrefix}__${tool}`, arguments: { text }, end_user: endUser },
+    });
+    assert.equal(res.status, 200, res.text);
+  },
+);
+
+Given(
+  'a RAG collection named {string} and one named {string}',
+  async function (this: GatewayWorld, first: string, second: string) {
+    for (const name of [first, second]) {
+      const res = await this.request('POST', '/v1/rag/collections', {
+        token: this.credential,
+        body: { name: unique(name) },
+      });
+      assert.equal(res.status, 201, res.text);
+      this.vars[`collection:${name}`] = res.json.name as string;
+    }
+  },
+);
+
+Given('a virtual key allowed only the {string} collections', async function (this: GatewayWorld, pattern: string) {
+  const key = await this.createKey({ allowed_collections: [pattern] });
+  this.credential = key.secret;
+});
+
+Then('that key lists only the {string} collection', async function (this: GatewayWorld, name: string) {
+  const res = await this.request('GET', '/v1/rag/collections', { token: this.credential });
+  assert.equal(res.status, 200, res.text);
+  const names = (res.json as Array<{ name: string }>).map((c) => c.name);
+  for (const [key, actual] of Object.entries(this.vars)) {
+    if (!key.startsWith('collection:')) continue;
+    assert.equal(names.includes(actual), key === `collection:${name}`, `${actual} in ${names.join(', ')}`);
+  }
+});

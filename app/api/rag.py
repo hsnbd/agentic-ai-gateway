@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select
 from starlette.datastructures import UploadFile
 
@@ -157,8 +157,24 @@ class ChunkListResponse(BaseModel):
     items: list[ChunkResponse]
 
 
-class SearchRequest(BaseModel):
-    collection_id: str
+class _CollectionTargets(BaseModel):
+    """One collection (``collection_id``), several (``collection_ids``), or both."""
+
+    collection_id: str | None = None
+    collection_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _some_collection(self) -> _CollectionTargets:
+        if not self.targets():
+            raise ValueError("collection_id or collection_ids is required")
+        return self
+
+    def targets(self) -> list[str]:
+        named = [self.collection_id] if self.collection_id else []
+        return list(dict.fromkeys([*named, *self.collection_ids]))
+
+
+class SearchRequest(_CollectionTargets):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, gt=0, le=100)
     min_score: float = Field(default=0.0, ge=-1.0, le=1.0)
@@ -182,12 +198,13 @@ class RetrievedChunkResponse(BaseModel):
 
 
 class SearchResponse(BaseModel):
+    #: The first collection searched, kept for single-collection clients.
     collection_id: str
+    collection_ids: list[str]
     results: list[RetrievedChunkResponse]
 
 
-class RagQueryRequest(BaseModel):
-    collection_id: str
+class RagQueryRequest(_CollectionTargets):
     request: ChatRequest
     query: str | None = None
     top_k: int = Field(default=5, gt=0, le=100)
@@ -513,8 +530,9 @@ async def get_chunk(
 
 @router.post("/v1/rag/search", response_model=SearchResponse)
 async def search(payload: SearchRequest, request: Request, access: Access) -> SearchResponse:
-    chunks = await _service(request).search(
-        payload.collection_id,
+    targets = payload.targets()
+    chunks = await _service(request).search_many(
+        targets,
         payload.query,
         top_k=payload.top_k,
         min_score=payload.min_score,
@@ -524,7 +542,9 @@ async def search(payload: SearchRequest, request: Request, access: Access) -> Se
         rerank_model=payload.rerank_model,
         access=access,
     )
-    return SearchResponse(collection_id=payload.collection_id, results=_chunk_response(chunks))
+    return SearchResponse(
+        collection_id=targets[0], collection_ids=targets, results=_chunk_response(chunks)
+    )
 
 
 @router.post("/v1/rag/query", dependencies=_WRITE, response_model=RagQueryResponse)
@@ -536,8 +556,10 @@ async def query(
     # Retrieval runs inside the pipeline (RagStage), exactly as for a chat
     # request carrying `aigw.rag`, so both paths share one implementation.
     try:
+        targets = payload.targets()
         options = RagOptions(
-            collection_id=payload.collection_id,
+            collection_id=targets[0],
+            extra_collection_ids=targets[1:],
             query=payload.query,
             top_k=payload.top_k,
             min_score=payload.min_score,

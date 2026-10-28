@@ -50,6 +50,8 @@ class ResolvedKey:
     allowed_routes: list[str] = field(default_factory=list)
     allowed_mcp_servers: list[str] = field(default_factory=list)
     allowed_tools: list[str] = field(default_factory=list)
+    allowed_collections: list[str] = field(default_factory=list)
+    tool_arg_bindings: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def is_valid(self, now: datetime | None = None) -> bool:
         now = now or datetime.now(UTC)
@@ -87,6 +89,8 @@ def _resolved_from_row(row: VirtualKey) -> ResolvedKey:
         allowed_routes=list(row.allowed_routes or []),
         allowed_mcp_servers=list(row.allowed_mcp_servers or []),
         allowed_tools=list(row.allowed_tools or []),
+        allowed_collections=list(row.allowed_collections or []),
+        tool_arg_bindings=dict(row.tool_arg_bindings or {}),
     )
 
 
@@ -107,6 +111,8 @@ def _serialize_key(key: ResolvedKey) -> str:
         "allowed_routes": key.allowed_routes,
         "allowed_mcp_servers": key.allowed_mcp_servers,
         "allowed_tools": key.allowed_tools,
+        "allowed_collections": key.allowed_collections,
+        "tool_arg_bindings": key.tool_arg_bindings,
     }
     return json.dumps(data, separators=(",", ":"))
 
@@ -136,6 +142,8 @@ def _deserialize_key(snapshot: str | bytes) -> ResolvedKey:
         allowed_routes=data.get("allowed_routes") or [],
         allowed_mcp_servers=data.get("allowed_mcp_servers") or [],
         allowed_tools=data.get("allowed_tools") or [],
+        allowed_collections=data.get("allowed_collections") or [],
+        tool_arg_bindings=data.get("tool_arg_bindings") or {},
     )
 
 
@@ -268,6 +276,8 @@ class KeyService:
             "allowed_routes",
             "allowed_mcp_servers",
             "allowed_tools",
+            "allowed_collections",
+            "tool_arg_bindings",
             "is_active",
             "expires_at",
             "metadata",

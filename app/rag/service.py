@@ -153,7 +153,7 @@ class RagService:
             result = await session.scalars(
                 select(RagCollection).where(access.visible_filter()).order_by(RagCollection.name)
             )
-            return list(result.all())
+            return [collection for collection in result.all() if access.permits(collection)]
 
     async def get_collection(
         self, collection_id: str, access: RagAccess = UNRESTRICTED, *, write: bool = False
@@ -511,6 +511,41 @@ class RagService:
         RAG_RETRIEVAL_SECONDS.labels(search_mode).observe(time.perf_counter() - started)
         RAG_RETRIEVALS.labels(search_mode, "hit" if chunks else "empty").inc()
         return chunks
+
+    async def search_many(
+        self,
+        collection_ids: list[str],
+        query: str,
+        *,
+        top_k: int | None = None,
+        access: RagAccess = UNRESTRICTED,
+        **opts: Any,
+    ) -> list[RetrievedChunk]:
+        """Search several collections and keep the best ``top_k`` chunks overall.
+
+        Scores are only comparable within one embedding space, so every
+        collection must use the same embedding model and dimensions. Each chunk
+        records the collection it came from in ``metadata.collection_id``.
+        """
+        ids = list(dict.fromkeys(collection_ids))
+        if len(ids) == 1:
+            return await self.search(ids[0], query, top_k=top_k, access=access, **opts)
+        collections = [await self.get_collection(collection_id, access) for collection_id in ids]
+        spaces = {(c.embedding_model, c.embedding_dimensions) for c in collections}
+        if len(spaces) > 1:
+            raise InvalidRequestError(
+                "Collections searched together must share one embedding model and dimension"
+            )
+        limit = self.state.settings.rag_default_top_k if top_k is None else top_k
+        merged: list[RetrievedChunk] = []
+        for collection_id in ids:
+            for chunk in await self.search(
+                collection_id, query, top_k=limit, access=access, **opts
+            ):
+                chunk.metadata = {**chunk.metadata, "collection_id": collection_id}
+                merged.append(chunk)
+        merged.sort(key=lambda chunk: chunk.score, reverse=True)
+        return merged[:limit]
 
     def _model_caller(self) -> Any:
         from app.core.builder import direct_model_caller

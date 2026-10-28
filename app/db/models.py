@@ -109,6 +109,12 @@ class VirtualKey(Base, TimestampMixin):
     allowed_mcp_servers: Mapped[list[str]] = mapped_column(JSONType, default=list)
     #: Namespaced MCP tools (``server__tool``, ``*`` wildcards); empty means all.
     allowed_tools: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    #: RAG collections (ids or names, ``*`` wildcards) this key may read, on top
+    #: of ownership; empty means every collection it owns or that is global.
+    allowed_collections: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    #: Tool arguments the gateway fills in itself, so a model cannot choose them:
+    #: ``{"server__tool*": {"argument": "end_user" | "key_id" | "team_id"}}``.
+    tool_arg_bindings: Mapped[dict[str, dict[str, str]]] = mapped_column(JSONType, default=dict)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -422,3 +428,5 @@ class ToolCallLog(Base):
     truncated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     guardrail: Mapped[str | None] = mapped_column(String(255))
     error: Mapped[str | None] = mapped_column(Text)
+    #: Arguments the gateway bound from the caller's identity (names only).
+    bound_args: Mapped[list[str]] = mapped_column(JSONType, default=list)

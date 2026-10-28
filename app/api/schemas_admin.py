@@ -122,6 +122,13 @@ class TimeSeriesResponse(BaseModel):
     points: list[TimeSeriesPoint]
 
 
+#: Where a bound tool argument's value comes from (app/tools/governance.py);
+#: "none" always removes the argument.
+BindingSource = Literal["end_user", "key_id", "team_id", "none"]
+#: ``{"server__tool*": {"argument": source}}``
+ToolArgBindings = dict[str, dict[str, BindingSource]]
+
+
 class KeyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     team_id: str | None = None
@@ -136,6 +143,8 @@ class KeyCreateRequest(BaseModel):
     allowed_routes: list[str] = Field(default_factory=list)
     allowed_mcp_servers: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
+    allowed_collections: list[str] = Field(default_factory=list)
+    tool_arg_bindings: ToolArgBindings = Field(default_factory=dict)
     expires_at: datetime | None = None
     enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -155,6 +164,8 @@ class KeyUpdateRequest(BaseModel):
     allowed_routes: list[str] | None = None
     allowed_mcp_servers: list[str] | None = None
     allowed_tools: list[str] | None = None
+    allowed_collections: list[str] | None = None
+    tool_arg_bindings: ToolArgBindings | None = None
     expires_at: datetime | None = None
     enabled: bool | None = None
     metadata: dict[str, Any] | None = None
@@ -179,6 +190,8 @@ class VirtualKeyResponse(BaseModel):
     allowed_routes: list[str]
     allowed_mcp_servers: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
+    allowed_collections: list[str] = Field(default_factory=list)
+    tool_arg_bindings: dict[str, dict[str, str]] = Field(default_factory=dict)
     enabled: bool = Field(validation_alias="is_active")
     expires_at: datetime | None
     last_used_at: datetime | None
@@ -379,6 +392,8 @@ class ToolCallLogResponse(BaseModel):
     truncated: bool
     guardrail: str | None
     error: str | None
+    #: Arguments the gateway filled from the caller's identity.
+    bound_args: list[str] = Field(default_factory=list)
 
 
 class GuardrailPolicyResponse(BaseModel):
