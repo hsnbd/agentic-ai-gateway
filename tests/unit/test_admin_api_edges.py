@@ -822,6 +822,31 @@ def test_timeseries_hourly_from_logs(admin_api: Any) -> None:
     assert [point["value"] for point in points] == [0.5]
 
 
+@pytest.mark.parametrize("interval", ["hour", "day"])
+def test_latency_series_percentiles_per_bucket(admin_api: Any, interval: str) -> None:
+    client, _, db = admin_api
+    _seed(
+        db,
+        *[_log(f"ls{i}", latency_ms=float(i * 10)) for i in range(1, 21)],
+        _log("ls-none", latency_ms=None),
+    )
+    response = client.get(
+        f"/admin/api/dashboard/latency?interval={interval}", headers=_headers(client)
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["interval"] == interval
+    [point] = body["points"]
+    assert point["requests"] == 20
+    assert (point["p50_ms"], point["p95_ms"], point["p99_ms"]) == (100.0, 190.0, 200.0)
+
+
+def test_latency_series_empty(admin_api: Any) -> None:
+    client, _, _ = admin_api
+    response = client.get("/admin/api/dashboard/latency", headers=_headers(client))
+    assert response.json() == {"interval": "hour", "points": []}
+
+
 def test_key_hash_collision_is_a_conflict(admin_api: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     client, _, _ = admin_api
     headers = _headers(client)

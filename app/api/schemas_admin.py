@@ -122,6 +122,19 @@ class TimeSeriesResponse(BaseModel):
     points: list[TimeSeriesPoint]
 
 
+class LatencyPoint(BaseModel):
+    timestamp: datetime
+    requests: int
+    p50_ms: float
+    p95_ms: float
+    p99_ms: float
+
+
+class LatencySeriesResponse(BaseModel):
+    interval: str
+    points: list[LatencyPoint]
+
+
 #: Where a bound tool argument's value comes from (app/tools/governance.py);
 #: "none" always removes the argument.
 BindingSource = Literal["end_user", "key_id", "team_id", "none"]

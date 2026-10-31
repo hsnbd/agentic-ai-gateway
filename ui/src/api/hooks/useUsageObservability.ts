@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiRequest } from '../client';
-import type { ApiPage, CacheEntry, CacheStats, DashboardSummary, DeploymentHealth, KeyBudget, TimeSeriesResponse, UsagePage } from '../../features/observability/types';
+import type { ApiPage, CacheEntry, CacheStats, DashboardSummary, DeploymentHealth, KeyBudget, LatencySeriesResponse, TimeSeriesResponse, UsagePage } from '../../features/observability/types';
 
 export function useUsagePage(groupBy: UsagePage['group_by'], window: string, limit: number, offset: number) {
   const params = new URLSearchParams({ group_by: groupBy, window, limit: String(limit), offset: String(offset) });
@@ -28,6 +28,13 @@ export function useMetricSeries(window: string, metric: 'requests' | 'successes'
   const params = new URLSearchParams({ window, metric, interval });
   return useQuery({ queryKey: ['dashboard', 'timeseries', window, metric, interval],
     queryFn: () => apiRequest<TimeSeriesResponse>(`/admin/api/dashboard/timeseries?${params.toString()}`), staleTime: 30_000 });
+}
+
+export function useLatencySeries(window: string) {
+  const interval = window === '30d' ? 'day' : 'hour';
+  const params = new URLSearchParams({ window, interval });
+  return useQuery({ queryKey: ['dashboard', 'latency', window, interval],
+    queryFn: () => apiRequest<LatencySeriesResponse>(`/admin/api/dashboard/latency?${params.toString()}`), staleTime: 30_000 });
 }
 
 export function useDashboardOverview(window: string) {

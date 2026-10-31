@@ -1,4 +1,4 @@
-.PHONY: help install dev dev-deps test test-unit test-integration coverage ui-test test-up test-down lint fmt fmt-check typecheck check bench bench-check bench-baseline eval hub hub-mcp hub-seed hub-run hub-test hub-eval ui-install ui-dev ui-build ui-lint up down logs migrate e2e-install e2e-up e2e e2e-api e2e-ui e2e-down
+.PHONY: help install dev dev-deps test test-unit test-integration coverage ui-test test-up test-down lint fmt fmt-check typecheck check bench bench-check bench-baseline eval hub hub-mcp hub-seed hub-run hub-test hub-eval ui-install ui-dev ui-build ui-lint up down logs migrate demo-data demo-data-remove e2e-install e2e-up e2e e2e-api e2e-ui e2e-down
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -76,6 +76,12 @@ logs: ## Tail the local stack logs
 
 migrate: ## Apply database migrations (Alembic)
 	uv run aigateway migrate
+
+demo-data: ## Replace the console's demo traffic (60 days of logs, rollups, keys, teams); real data is untouched
+	uv run --env-file .env python scripts/seed_demo.py --reset
+
+demo-data-remove: ## Remove the demo traffic seeded by demo-data
+	uv run --env-file .env python scripts/seed_demo.py --remove
 
 e2e-install: ## Install the Cucumber/Playwright E2E suite and its browser
 	cd e2e && npm ci && npx playwright install --with-deps chromium

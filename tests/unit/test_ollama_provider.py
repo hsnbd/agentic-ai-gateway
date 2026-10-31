@@ -293,6 +293,88 @@ async def test_tool_calls_in_separate_stream_lines_get_their_own_index(
     assert len({call.id for call in calls}) == 2
 
 
+_BASH_TOOL = ToolDef.model_validate(
+    {
+        "function": {
+            "name": "bash",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout": {"type": "number"},
+                    "workdir": {"type": ["string", "null"]},
+                    "env": {"anyOf": [{"type": "object"}, {"type": "null"}]},
+                    "shell": {"type": "string", "nullable": True},
+                    "description": {"type": "string"},
+                },
+                "required": ["command", "description"],
+            },
+        }
+    }
+)
+_NULLY_CALL = {
+    "function": {
+        "name": "bash",
+        "arguments": {
+            "command": "ls",
+            "description": None,
+            "timeout": None,
+            "workdir": None,
+            "env": None,
+            "shell": None,
+            "unknown": None,
+        },
+    }
+}
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_null_optional_tool_arguments_are_dropped(deployment: Deployment) -> None:
+    # llama3.2 fills skipped optional parameters with null; strict clients reject that.
+    respx.post("http://localhost:11434/api/chat").mock(
+        return_value=httpx.Response(
+            200, json={"message": {"role": "assistant", "tool_calls": [_NULLY_CALL]}}
+        )
+    )
+    request = ChatRequest(
+        model="llama3.1", messages=[Message(role=Role.USER, content="go")], tools=[_BASH_TOOL]
+    )
+    async with httpx.AsyncClient() as client:
+        result = await OllamaProvider(client).chat(request, deployment)
+
+    [call] = result.choices[0].message.tool_calls
+    # Required and nullable parameters keep their null; the rest are omitted.
+    assert json.loads(call.arguments) == {
+        "command": "ls",
+        "description": None,
+        "workdir": None,
+        "env": None,
+        "shell": None,
+    }
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_null_optional_tool_arguments_are_dropped_when_streaming(
+    deployment: Deployment,
+) -> None:
+    unlisted = {"function": {"name": "other", "arguments": {"x": None}}}
+    line = {"message": {"role": "assistant", "tool_calls": [_NULLY_CALL, unlisted]}}
+    body = json.dumps(line) + "\n" + json.dumps({"done": True}) + "\n"
+    respx.post("http://localhost:11434/api/chat").mock(return_value=httpx.Response(200, text=body))
+    request = ChatRequest(
+        model="llama3.1", messages=[Message(role=Role.USER, content="go")], tools=[_BASH_TOOL]
+    )
+    async with httpx.AsyncClient() as client:
+        chunks = [chunk async for chunk in OllamaProvider(client).stream(request, deployment)]
+
+    bash, other = (call for chunk in chunks for call in chunk.tool_calls)
+    assert "timeout" not in json.loads(bash.arguments or "{}")
+    # A tool the request did not declare is passed through untouched.
+    assert json.loads(other.arguments or "{}") == {"x": None}
+
+
 @pytest.mark.asyncio
 @respx.mock
 async def test_embedding_batch_order_and_legacy_shape(deployment: Deployment) -> None:

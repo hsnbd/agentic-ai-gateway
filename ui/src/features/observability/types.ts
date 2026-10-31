@@ -122,6 +122,19 @@ export interface TimeSeriesResponse {
   points: TimeSeriesPoint[];
 }
 
+export interface LatencyPoint {
+  timestamp: string;
+  requests: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+}
+
+export interface LatencySeriesResponse {
+  interval: 'hour' | 'day';
+  points: LatencyPoint[];
+}
+
 export interface DashboardSummary {
   requests: number;
   success_rate: number;

@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Box, Chip, Grid, Stack, Typography } from '@mui/material';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Area, AreaChart } from 'recharts';
-import { useMetricSeries, useDeployments, useUsagePage, useDashboardOverview } from '../api/hooks/useUsageObservability';
+import { useMetricSeries, useDeployments, useUsagePage, useDashboardOverview, useLatencySeries } from '../api/hooks/useUsageObservability';
 import { ErrorState, LoadingState, PageHeader, StatCard, EmptyState } from '../components/Shared';
-import { ChartPanel, MetricStatCard, UnavailableChart, UnavailableNote, useChartColors, WindowSelect, type WindowValue } from '../features/observability/Observability';
+import { ChartPanel, MetricStatCard, UnavailableNote, useChartColors, WindowSelect, type WindowValue } from '../features/observability/Observability';
 import { formatMoney, formatNumber, formatWindow } from '../features/observability/format';
 import type { TimeSeriesPoint, UsageRow } from '../features/observability/types';
 
@@ -50,6 +50,8 @@ export default function Dashboard() {
   const providerRows = useUsagePage('provider', window, 200, 0);
   const keyRows = useUsagePage('key', window, 200, 0);
   const deployments = useDeployments();
+  const latency = useLatencySeries(window);
+  const latencyData = useMemo(() => latency.data?.points.map((point) => ({ ...point, label: stampLabel(point.timestamp) })) ?? [], [latency.data]);
   const requestData = useMemo(() => mergeSeries(requests.data?.points, successes.data?.points, 'requests', 'successes').map((point) => {
     const matchingError = errors.data?.points.find((errorPoint) => errorPoint.timestamp === point.timestamp);
     return { ...point, errors: matchingError?.value ?? 0 };
@@ -82,8 +84,14 @@ export default function Dashboard() {
               <Tooltip /><Legend /><Area type="monotone" dataKey="successes" stackId="status" stroke={colors.success} fill={colors.success} fillOpacity={0.32} />
               <Area type="monotone" dataKey="errors" stackId="status" stroke={colors.error} fill={colors.error} fillOpacity={0.32} /></AreaChart></ResponsiveContainer>}
         </ChartPanel></Grid>
-        <Grid item xs={12} lg={6}><ChartPanel title="Latency percentiles" description={`Latency percentiles over ${formatWindow(window)}`}>
-          <UnavailableChart message="The API provides p50/p95 only for the whole selected window, not as a time series." />
+        <Grid item xs={12} lg={6}><ChartPanel title="Latency percentiles" description={`p50, p95, and p99 per ${window === '30d' ? 'day' : 'hour'} · ${formatWindow(window)}`}>
+          {latency.isPending ? <LoadingState label="Loading latency series" /> : latency.isError ? <ErrorState error={latency.error} onRetry={() => void latency.refetch()} /> : latencyData.length === 0 ? <EmptyState title="No latency data" /> :
+            <ResponsiveContainer width="100%" height="100%"><LineChart data={latencyData}><CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
+              <XAxis dataKey="label" tick={{ fill: colors.text, fontSize: 11 }} /><YAxis tick={{ fill: colors.text, fontSize: 11 }} tickFormatter={(value: number) => `${formatNumber(value / 1000, 1)}s`} />
+              <Tooltip formatter={(value) => `${formatNumber(Number(value), 0)} ms`} /><Legend />
+              <Line type="monotone" dataKey="p50_ms" name="p50" stroke={colors.primary} strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="p95_ms" name="p95" stroke={colors.warning} strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="p99_ms" name="p99" stroke={colors.error} strokeWidth={1.5} strokeDasharray="4 3" dot={false} /></LineChart></ResponsiveContainer>}
         </ChartPanel></Grid>
         <Grid item xs={12} lg={6}><ChartPanel title="Spend over time" description={`${formatWindow(window)} · ${bucket} buckets`}>
           {trend.isPending ? <LoadingState /> : trend.isError ? <ErrorState error={trend.error} onRetry={() => void trend.refetch()} /> : trendData.length === 0 ? <EmptyState title="No spend data" /> :

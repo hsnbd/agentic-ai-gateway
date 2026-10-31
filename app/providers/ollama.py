@@ -23,9 +23,33 @@ from app.core.schemas import (
     TextPart,
     ToolCall,
     ToolCallDelta,
+    ToolDef,
     Usage,
 )
 from app.providers.base import Deployment, Provider
+
+
+def _allows_null(schema: dict[str, Any]) -> bool:
+    kind = schema.get("type")
+    if kind == "null" or (isinstance(kind, list) and "null" in kind) or schema.get("nullable"):
+        return True
+    return any(_allows_null(option) for option in schema.get("anyOf", []) + schema.get("oneOf", []))
+
+
+def _drop_null_optionals(arguments: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop ``null`` for optional parameters whose schema does not accept null.
+
+    Small local models fill every parameter they skip with ``null``
+    (``"timeout": null``), which strict clients such as opencode reject as
+    invalid. An omitted optional parameter means the same thing, so omit it.
+    """
+    required = set(schema.get("required", []))
+    properties = schema.get("properties", {})
+    return {
+        name: value
+        for name, value in arguments.items()
+        if value is not None or name in required or _allows_null(properties.get(name, {}))
+    }
 
 
 class OllamaProvider(Provider):
@@ -123,16 +147,15 @@ class OllamaProvider(Provider):
         return FinishReason.STOP
 
     @staticmethod
-    def _tool_calls(payload: dict[str, Any]) -> list[ToolCall]:
+    def _tool_calls(payload: dict[str, Any], tools: list[ToolDef] | None = None) -> list[ToolCall]:
+        schemas = {tool.function.name: tool.function.parameters for tool in tools or []}
         calls: list[ToolCall] = []
         for item in payload.get("tool_calls", []):
             function = item.get("function", {})
-            calls.append(
-                ToolCall(
-                    name=function["name"],
-                    arguments=json.dumps(function.get("arguments", {})),
-                )
-            )
+            arguments = function.get("arguments", {})
+            if isinstance(arguments, dict) and function["name"] in schemas:
+                arguments = _drop_null_optionals(arguments, schemas[function["name"]])
+            calls.append(ToolCall(name=function["name"], arguments=json.dumps(arguments)))
         return calls
 
     @staticmethod
@@ -191,7 +214,7 @@ class OllamaProvider(Provider):
             data = response.json()
             self._check_reply(data, deployment)
             raw_message = data.get("message", {})
-            tool_calls = self._tool_calls(raw_message)
+            tool_calls = self._tool_calls(raw_message, request.tools)
             message = Message(
                 role=Role(raw_message.get("role", "assistant")),
                 content=raw_message.get("content", ""),
@@ -232,7 +255,7 @@ class OllamaProvider(Provider):
                     if data.get("error"):
                         self._check_reply(data, deployment)
                     message = data.get("message", {})
-                    calls = self._tool_calls(message)
+                    calls = self._tool_calls(message, request.tools)
                     # Ollama sends each call whole, with no id, possibly one per line.
                     deltas = [
                         ToolCallDelta(

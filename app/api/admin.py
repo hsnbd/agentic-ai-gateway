@@ -49,6 +49,8 @@ from app.api.schemas_admin import (
     HealthCheckResponse,
     KeyCreateRequest,
     KeyUpdateRequest,
+    LatencyPoint,
+    LatencySeriesResponse,
     LoginRequest,
     LoginResponse,
     LogoutRequest,
@@ -537,6 +539,47 @@ async def dashboard_timeseries(
         TimeSeriesPoint(timestamp=stamp, value=value) for stamp, value in sorted(buckets.items())
     ]
     return TimeSeriesResponse(metric=metric, interval=interval, points=points)
+
+
+def _nearest_rank(ordered: list[float], percentile: float) -> float:
+    """Same nearest-rank rule as `_latency_percentile`, on an already-sorted list."""
+    return ordered[max(0, math.ceil(percentile * len(ordered)) - 1)]
+
+
+@router.get("/dashboard/latency", response_model=LatencySeriesResponse)
+async def dashboard_latency(
+    state: Annotated[GatewayState, Depends(get_gateway_state)],
+    _: CurrentAdmin,
+    window: str = Query(default="24h"),
+    interval: Literal["hour", "day"] = Query(default="hour"),
+) -> LatencySeriesResponse:
+    # Rollups keep only a latency sum, so percentiles have to come from raw logs.
+    start = _window_start(window)
+    buckets: dict[datetime, list[float]] = defaultdict(list)
+    async with state.db.session() as session:
+        result = await session.stream(
+            select(RequestLog.created_at, RequestLog.latency_ms)
+            .where(RequestLog.created_at >= start, RequestLog.latency_ms.is_not(None))
+            .execution_options(yield_per=1000)
+        )
+        async for log_row in result:
+            stamp = log_row.created_at.replace(minute=0, second=0, microsecond=0)
+            if interval == "day":
+                stamp = stamp.replace(hour=0)
+            buckets[stamp].append(float(log_row.latency_ms))
+    points = []
+    for stamp, values in sorted(buckets.items()):
+        values.sort()
+        points.append(
+            LatencyPoint(
+                timestamp=stamp,
+                requests=len(values),
+                p50_ms=_nearest_rank(values, 0.50),
+                p95_ms=_nearest_rank(values, 0.95),
+                p99_ms=_nearest_rank(values, 0.99),
+            )
+        )
+    return LatencySeriesResponse(interval=interval, points=points)
 
 
 @router.get(
